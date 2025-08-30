@@ -201,6 +201,7 @@ export const insertExpenseSchema = createInsertSchema(expenses).omit({
   createdAt: true,
 }).extend({
   amount: z.coerce.number().min(0),
+  creatorName: z.string().optional(),
 });
 
 export const insertLeaveApplicationSchema = createInsertSchema(leaveApplications).omit({

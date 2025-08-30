@@ -209,7 +209,8 @@ export default function Verification() {
       visited: editForm.visited,
       reasonNotEighteen: editForm.reasonNotEighteen,
       reasonNotVisited: editForm.reasonNotVisited,
-      customerName: editForm.customerName
+      customerName: editForm.customerName,
+      phoneNumber: selectedBooking.phoneNumber // Include the phone number in the update
     });
   };
 

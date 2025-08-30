@@ -16,7 +16,8 @@ import {
   Shield,
   Settings,
   ClipboardCheck,
-  X
+  X,
+  MoreHorizontal
 } from "lucide-react";
 
 const navigationItems = [
@@ -76,6 +77,12 @@ const adminNavigationItems = [
     name: "Configuration",
     href: "/configuration",
     icon: Settings,
+    adminOnly: true,
+  },
+  {
+    name: "Others",
+    href: "/admin-settings",
+    icon: MoreHorizontal,
     adminOnly: true,
   },
 ];

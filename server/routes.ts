@@ -523,10 +523,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .json({ message: "Only admins can update configuration" });
       }
 
-      const { theatres, timeSlots } = req.body;
+      const { theatres, timeSlots, expenseCategories, expenseCreators } = req.body;
       const userId = currentUser.claims.sub;
       const config = await storage.updateConfig(
-        { theatres, timeSlots },
+        { theatres, timeSlots, expenseCategories, expenseCreators },
         userId,
       );
       res.json(config);
@@ -799,7 +799,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         "CREATE",
         "EXPENSE",
         expense.id,
-        `Created expense: ${expenseData.description}`,
+        `Created expense: ${expenseData.description} by ${expenseData.creatorName || 'Unknown'}`,
       );
 
       res.json(expense);

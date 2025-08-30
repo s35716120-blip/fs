@@ -332,7 +332,9 @@ export const storage = {
     // Default configuration
     const defaultConfig = {
       theatres: ['Theatre 1', 'Theatre 2', 'Theatre 3'],
-      timeSlots: ['10:00 AM', '1:00 PM', '4:00 PM', '7:00 PM']
+      timeSlots: ['10:00 AM', '1:00 PM', '4:00 PM', '7:00 PM'],
+      expenseCategories: ['Utilities', 'Maintenance', 'Staff Salaries', 'Equipment', 'Marketing', 'Rent', 'Supplies', 'Insurance', 'Other'],
+      expenseCreators: ['Kumar', 'Rahul', 'Priya', 'Amit', 'Sneha']
     };
     
     try {
@@ -346,9 +348,21 @@ export const storage = {
         where: eq(configurations.key, 'timeSlots')
       });
       
+      // Get expense categories configuration
+      const expenseCategoriesConfig = await db.query.configurations.findFirst({
+        where: eq(configurations.key, 'expenseCategories')
+      });
+      
+      // Get expense creators configuration
+      const expenseCreatorsConfig = await db.query.configurations.findFirst({
+        where: eq(configurations.key, 'expenseCreators')
+      });
+      
       return {
         theatres: theatresConfig ? JSON.parse(theatresConfig.value) : defaultConfig.theatres,
-        timeSlots: timeSlotsConfig ? JSON.parse(timeSlotsConfig.value) : defaultConfig.timeSlots
+        timeSlots: timeSlotsConfig ? JSON.parse(timeSlotsConfig.value) : defaultConfig.timeSlots,
+        expenseCategories: expenseCategoriesConfig ? JSON.parse(expenseCategoriesConfig.value) : defaultConfig.expenseCategories,
+        expenseCreators: expenseCreatorsConfig ? JSON.parse(expenseCreatorsConfig.value) : defaultConfig.expenseCreators
       };
     } catch (error) {
       console.error('Error fetching configuration:', error);
@@ -356,7 +370,7 @@ export const storage = {
     }
   },
   
-  async updateConfig({ theatres, timeSlots }: { theatres: string[], timeSlots: string[] }, userId: string) {
+  async updateConfig({ theatres, timeSlots, expenseCategories, expenseCreators }: { theatres: string[], timeSlots: string[], expenseCategories?: string[], expenseCreators?: string[] }, userId: string) {
     try {
       // Update theatres configuration
       await db.insert(configurations)
@@ -390,7 +404,43 @@ export const storage = {
           }
         });
       
-      return { theatres, timeSlots };
+      // Update expense categories configuration if provided
+      if (expenseCategories) {
+        await db.insert(configurations)
+          .values({
+            key: 'expenseCategories',
+            value: JSON.stringify(expenseCategories),
+            updatedBy: userId
+          })
+          .onConflictDoUpdate({
+            target: configurations.key,
+            set: {
+              value: JSON.stringify(expenseCategories),
+              updatedBy: userId,
+              updatedAt: sql`(CURRENT_TIMESTAMP)`
+            }
+          });
+      }
+      
+      // Update expense creators configuration if provided
+      if (expenseCreators) {
+        await db.insert(configurations)
+          .values({
+            key: 'expenseCreators',
+            value: JSON.stringify(expenseCreators),
+            updatedBy: userId
+          })
+          .onConflictDoUpdate({
+            target: configurations.key,
+            set: {
+              value: JSON.stringify(expenseCreators),
+              updatedBy: userId,
+              updatedAt: sql`(CURRENT_TIMESTAMP)`
+            }
+          });
+      }
+      
+      return { theatres, timeSlots, expenseCategories, expenseCreators };
     } catch (error) {
       console.error('Error updating configuration:', error);
       throw error;

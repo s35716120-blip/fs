@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -12,15 +12,17 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, IndianRupee, Calendar, Tag, Download, Printer } from "lucide-react";
+import { Plus, IndianRupee, Calendar, Tag, Download, Printer, User, Filter, X, Loader2 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { insertExpenseSchema } from "@shared/schema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 
-const EXPENSE_CATEGORIES = [
+// Default values will be replaced by configuration from API
+const DEFAULT_EXPENSE_CATEGORIES = [
   "Utilities",
-  "Maintenance", 
+  "Maintenance",
   "Staff Salaries",
   "Equipment",
   "Marketing",
@@ -30,12 +32,28 @@ const EXPENSE_CATEGORIES = [
   "Other"
 ];
 
+const DEFAULT_EXPENSE_CREATORS = [
+  "Kumar",
+  "Rahul",
+  "Priya",
+  "Amit",
+  "Sneha"
+];
+
 export default function Expenses() {
   const { toast } = useToast();
   const { isAuthenticated, isLoading } = useAuth();
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>("");
+  const [selectedCreator, setSelectedCreator] = useState<string>("");
+  const [dateRange, setDateRange] = useState<{ startDate: string; endDate: string }>({ startDate: "", endDate: "" });
+  const printSectionRef = useRef<HTMLDivElement>(null);
+  
+  // State for configuration data
+  const [expenseCategories, setExpenseCategories] = useState<string[]>(DEFAULT_EXPENSE_CATEGORIES);
+  const [expenseCreators, setExpenseCreators] = useState<string[]>(DEFAULT_EXPENSE_CREATORS);
 
-  // Redirect to home if not authenticated
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       toast({
@@ -57,9 +75,51 @@ export default function Expenses() {
       description: "",
       amount: "",
       expenseDate: new Date().toISOString().split('T')[0],
+      creatorName: expenseCreators.length > 0 ? expenseCreators[0] : "",
     },
   });
+  
+  // Update form default values when expense creators change
+  useEffect(() => {
+    if (expenseCreators.length > 0 && !form.getValues().creatorName) {
+      form.setValue("creatorName", expenseCreators[0]);
+    }
+  }, [expenseCreators, form]);
 
+  // Fetch configuration from API
+  const { data: configData, isLoading: isConfigLoading, error: configError } = useQuery({
+    queryKey: ["/api/config"],
+    queryFn: async () => {
+      return await apiRequest("GET", "/api/config");
+    },
+    onError: (error: Error) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: "Error",
+        description: error.message || "Failed to fetch configuration",
+        variant: "destructive",
+      });
+    },
+  });
+  
+  // Update configuration when data is fetched
+  useEffect(() => {
+    if (configData) {
+      setExpenseCategories(configData.expenseCategories || DEFAULT_EXPENSE_CATEGORIES);
+      setExpenseCreators(configData.expenseCreators || DEFAULT_EXPENSE_CREATORS);
+    }
+  }, [configData]);
+  
   const { data: expenses, isLoading: isExpensesLoading, error: expensesError } = useQuery<any[]>({
     queryKey: ["/api/expenses"],
     retry: 1,
@@ -110,7 +170,7 @@ export default function Expenses() {
       const response = await fetch(`/api/expenses/export${params}`, {
         credentials: 'include'
       });
-      
+
       if (response.ok) {
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
@@ -121,7 +181,7 @@ export default function Expenses() {
         a.click();
         window.URL.revokeObjectURL(url);
         document.body.removeChild(a);
-        
+
         toast({
           title: "Success",
           description: "Expenses exported successfully",
@@ -131,7 +191,7 @@ export default function Expenses() {
       }
     } catch (error) {
       toast({
-        title: "Error", 
+        title: "Error",
         description: "Failed to export expenses",
         variant: "destructive",
       });
@@ -139,7 +199,97 @@ export default function Expenses() {
   };
 
   const handlePrint = () => {
-    window.print();
+    let filteredExpenses = [...(expensesArray || [])];
+
+    if (selectedCategory) {
+      filteredExpenses = filteredExpenses.filter(expense => expense.category === selectedCategory);
+    }
+
+    if (selectedCreator) {
+      filteredExpenses = filteredExpenses.filter(expense => expense.creatorName === selectedCreator);
+    }
+
+    if (dateRange.startDate) {
+      filteredExpenses = filteredExpenses.filter(expense =>
+        new Date(expense.expenseDate) >= new Date(dateRange.startDate));
+    }
+
+    if (dateRange.endDate) {
+      filteredExpenses = filteredExpenses.filter(expense =>
+        new Date(expense.expenseDate) <= new Date(dateRange.endDate));
+    }
+
+    const filteredTotal = filteredExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0);
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      toast({
+        title: "Error",
+        description: "Could not open print window. Please check your popup blocker settings.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Expense Report</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            h1 { color: #e11d48; text-align: center; margin-bottom: 20px; }
+            .filters { margin-bottom: 20px; padding: 10px; background-color: #f8f9fa; border-radius: 5px; }
+            table { width: 100%; border-collapse: collapse; }
+            th { background-color: #f1f1f1; text-align: left; padding: 10px; }
+            td { padding: 10px; border-bottom: 1px solid #ddd; }
+            .total { font-weight: bold; margin-top: 20px; text-align: right; font-size: 18px; }
+            .date { color: #666; }
+            .category { background-color: #e6f7ff; padding: 5px 10px; border-radius: 15px; display: inline-block; }
+            .amount { font-weight: bold; color: #e11d48; }
+          </style>
+        </head>
+        <body>
+          <h1>Expense Report</h1>
+          <div class="filters">
+            <strong>Filters:</strong>
+            ${selectedCategory ? `Category: ${selectedCategory}` : 'All Categories'} |
+            ${selectedCreator ? `Created By: ${selectedCreator}` : 'All Creators'} |
+            Date Range: ${dateRange.startDate ? new Date(dateRange.startDate).toLocaleDateString('en-IN') : 'Any'}
+            to ${dateRange.endDate ? new Date(dateRange.endDate).toLocaleDateString('en-IN') : 'Any'}
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Category</th>
+                <th>Description</th>
+                <th>Created By</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredExpenses.map(expense => `
+                <tr>
+                  <td class="date">${formatDate(expense.expenseDate)}</td>
+                  <td><span class="category">${expense.category}</span></td>
+                  <td>${expense.description}</td>
+                  <td>${expense.creatorName || 'Unknown'}</td>
+                  <td class="amount">₹${Number(expense.amount).toLocaleString('en-IN')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <div class="total">Total: ₹${filteredTotal.toLocaleString('en-IN')}</div>
+        </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    printWindow.onafterprint = function () {
+      printWindow.close();
+    };
   };
 
   const formatCurrency = (value: number) => {
@@ -150,15 +300,17 @@ export default function Expenses() {
     return new Date(dateString).toLocaleDateString('en-IN');
   };
 
-  if (isLoading) {
+  if (isLoading || isConfigLoading) {
     return (
       <div className="min-h-screen bg-rosae-black flex items-center justify-center">
-        <div className="text-white text-lg">Loading...</div>
+        <div className="text-white text-lg flex items-center">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          Loading...
+        </div>
       </div>
     );
   }
 
-  // Handle API errors
   if (expensesError) {
     return (
       <div className="flex min-h-screen bg-rosae-black">
@@ -167,7 +319,7 @@ export default function Expenses() {
           <div className="bg-rosae-dark-gray border border-gray-600 rounded-lg p-6 text-white">
             <h2 className="text-2xl font-bold mb-4">Error Loading Expenses</h2>
             <p className="text-gray-300 mb-4">There was a problem loading the expenses data.</p>
-            <Button 
+            <Button
               onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/expenses"] })}
               className="bg-rosae-red hover:bg-rosae-dark-red"
             >
@@ -179,14 +331,31 @@ export default function Expenses() {
     );
   }
 
-  // Ensure expenses is an array
   const expensesArray = Array.isArray(expenses) ? expenses : [];
 
-  // Calculate total expenses
-  const totalExpenses = expensesArray.reduce((sum: number, expense: any) => sum + Number(expense.amount), 0);
+  const filteredExpenses = expensesArray.filter((expense: any) => {
+    if (selectedCategory && expense.category !== selectedCategory) {
+      return false;
+    }
 
-  // Group expenses by category
-  const expensesByCategory = expensesArray.reduce((acc: any, expense: any) => {
+    if (selectedCreator && expense.creatorName !== selectedCreator) {
+      return false;
+    }
+
+    if (dateRange.startDate && new Date(expense.expenseDate) < new Date(dateRange.startDate)) {
+      return false;
+    }
+
+    if (dateRange.endDate && new Date(expense.expenseDate) > new Date(dateRange.endDate)) {
+      return false;
+    }
+
+    return true;
+  });
+
+  const totalExpenses = filteredExpenses.reduce((sum: number, expense: any) => sum + Number(expense.amount), 0);
+
+  const expensesByCategory = filteredExpenses.reduce((acc: any, expense: any) => {
     const category = expense.category;
     if (!acc[category]) {
       acc[category] = 0;
@@ -199,254 +368,410 @@ export default function Expenses() {
     <div className="flex min-h-screen bg-rosae-black">
       <Sidebar />
       <div className="flex-1">
-      <div className="p-6">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h2 className="text-2xl font-bold text-white" data-testid="text-page-title">Expense Management</h2>
-            <p className="text-gray-400">Track and manage all business expenses</p>
-          </div>
-          <Dialog open={isExpenseModalOpen} onOpenChange={setIsExpenseModalOpen}>
-            <DialogTrigger asChild>
-              <Button 
-                className="bg-rosae-red hover:bg-rosae-dark-red px-6 py-2"
-                data-testid="button-new-expense"
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <h2 className="text-2xl font-bold text-white" data-testid="text-page-title">Expense Management</h2>
+              <p className="text-gray-400">Track and manage all business expenses</p>
+            </div>
+            <div className="flex space-x-3">
+              <Popover open={isFilterOpen} onOpenChange={setIsFilterOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" data-testid="button-filter">
+                    <Filter className="mr-2 w-4 h-4" />
+                    Filter
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-80 bg-rosae-dark-gray border-gray-600 text-white p-4">
+                  <div className="space-y-4">
+                    <h3 className="font-medium text-white">Filter Expenses</h3>
+
+                    <div className="space-y-2">
+                      <Label className="text-gray-300">Category</Label>
+                      <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                        <SelectTrigger className="bg-gray-800 border-gray-600 text-white">
+                          <SelectValue placeholder="All Categories" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-gray-800 border-gray-600">
+                          <SelectItem value="">All Categories</SelectItem>
+                          {expenseCategories.map((category) => (
+                            <SelectItem key={category} value={category}>
+                              {category}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-gray-300">Created By</Label>
+                      <Select value={selectedCreator} onValueChange={setSelectedCreator}>
+                        <SelectTrigger className="bg-gray-800 border-gray-600 text-white">
+                          <SelectValue placeholder="All Creators" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-gray-800 border-gray-600">
+                          <SelectItem value="">All Creators</SelectItem>
+                          {expenseCreators.map((creator) => (
+                            <SelectItem key={creator} value={creator}>
+                              {creator}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-gray-300">Start Date</Label>
+                      <Input
+                        type="date"
+                        className="bg-gray-800 border-gray-600 text-white"
+                        value={dateRange.startDate}
+                        onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-gray-300">End Date</Label>
+                      <Input
+                        type="date"
+                        className="bg-gray-800 border-gray-600 text-white"
+                        value={dateRange.endDate}
+                        onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="flex justify-between pt-2">
+                      <Button
+                        variant="outline"
+                        className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                        onClick={() => {
+                          setSelectedCategory("");
+                          setSelectedCreator("");
+                          setDateRange({ startDate: "", endDate: "" });
+                        }}
+                      >
+                        <X className="mr-2 w-4 h-4" />
+                        Clear
+                      </Button>
+                      <Button
+                        className="bg-rosae-red hover:bg-rosae-dark-red"
+                        onClick={() => setIsFilterOpen(false)}
+                      >
+                        Apply Filters
+                      </Button>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              <Button
+                variant="outline"
+                className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                onClick={handlePrint}
+                data-testid="button-print"
               >
-                <Plus className="mr-2 w-4 h-4" />
-                New Expense
+                <Printer className="mr-2 w-4 h-4" />
+                Print
               </Button>
-            </DialogTrigger>
-            <DialogContent className="bg-rosae-dark-gray border-gray-600 text-white">
-              <DialogHeader>
-                <DialogTitle className="text-xl font-bold text-white">Add New Expense</DialogTitle>
-              </DialogHeader>
-              <Form {...form}>
-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="category"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-gray-300">Category</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
+
+              <Dialog open={isExpenseModalOpen} onOpenChange={setIsExpenseModalOpen}>
+                <DialogTrigger asChild>
+                  <Button
+                    className="bg-rosae-red hover:bg-rosae-dark-red px-6 py-2"
+                    data-testid="button-new-expense"
+                  >
+                    <Plus className="mr-2 w-4 h-4" />
+                    New Expense
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="bg-rosae-dark-gray border-gray-600 text-white">
+                  <DialogHeader>
+                    <DialogTitle className="text-xl font-bold text-white">Add New Expense</DialogTitle>
+                  </DialogHeader>
+                  <Form {...form}>
+                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="category"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-gray-300">Category</FormLabel>
+                              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                <FormControl>
+                                  <SelectTrigger className="bg-gray-800 border-gray-600 text-white" data-testid="select-category">
+                                    <SelectValue placeholder="Select category" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent className="bg-gray-800 border-gray-600">
+                                  {expenseCategories.map((category) => (
+                                    <SelectItem key={category} value={category}>
+                                      {category}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="amount"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-gray-300">Amount</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  placeholder="1000"
+                                  className="bg-gray-800 border-gray-600 text-white"
+                                  data-testid="input-amount"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="expenseDate"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-gray-300">Expense Date</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="date"
+                                  className="bg-gray-800 border-gray-600 text-white"
+                                  data-testid="input-expense-date"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="creatorName"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-gray-300">Created By</FormLabel>
+                              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                <FormControl>
+                                  <SelectTrigger className="bg-gray-800 border-gray-600 text-white" data-testid="select-creator">
+                                    <SelectValue placeholder="Select creator" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent className="bg-gray-800 border-gray-600">
+                                  {expenseCreators.map((creator) => (
+                                    <SelectItem key={creator} value={creator}>
+                                      {creator}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <FormField
+                        control={form.control}
+                        name="description"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-gray-300">Description</FormLabel>
                             <FormControl>
-                              <SelectTrigger className="bg-gray-800 border-gray-600 text-white" data-testid="select-category">
-                                <SelectValue placeholder="Select category" />
-                              </SelectTrigger>
+                              <Textarea
+                                placeholder="Describe the expense..."
+                                className="bg-gray-800 border-gray-600 text-white resize-none"
+                                rows={3}
+                                data-testid="textarea-description"
+                                {...field}
+                              />
                             </FormControl>
-                            <SelectContent className="bg-gray-800 border-gray-600">
-                              {EXPENSE_CATEGORIES.map((category) => (
-                                <SelectItem key={category} value={category}>
-                                  {category}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                    <FormField
-                      control={form.control}
-                      name="amount"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-gray-300">Amount</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              placeholder="1000"
-                              className="bg-gray-800 border-gray-600 text-white"
-                              data-testid="input-amount"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                      <div className="flex justify-end space-x-4">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setIsExpenseModalOpen(false)}
+                          className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                          data-testid="button-cancel-expense"
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="submit"
+                          disabled={createExpenseMutation.isPending}
+                          className="bg-rosae-red hover:bg-rosae-dark-red"
+                          data-testid="button-save-expense"
+                        >
+                          {createExpenseMutation.isPending ? "Saving..." : "Save Expense"}
+                        </Button>
+                      </div>
+                    </form>
+                  </Form>
+                </DialogContent>
+              </Dialog>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <Card className="bg-rosae-dark-gray border-gray-600">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-gray-400 text-sm">Total Expenses</p>
+                    <p className="text-3xl font-bold text-white" data-testid="text-total-expenses">
+                      {formatCurrency(totalExpenses)}
+                    </p>
                   </div>
+                  <div className="w-12 h-12 bg-rosae-red/20 rounded-lg flex items-center justify-center">
+                    <IndianRupee className="text-rosae-red text-xl" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-                  <FormField
-                    control={form.control}
-                    name="expenseDate"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-gray-300">Expense Date</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="date"
-                            className="bg-gray-800 border-gray-600 text-white"
-                            data-testid="input-expense-date"
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
+            <Card className="bg-rosae-dark-gray border-gray-600">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-gray-400 text-sm">Categories</p>
+                    <p className="text-3xl font-bold text-white" data-testid="text-categories-count">
+                      {Object.keys(expensesByCategory).length}
+                    </p>
+                  </div>
+                  <div className="w-12 h-12 bg-blue-500/20 rounded-lg flex items-center justify-center">
+                    <Tag className="text-blue-400 text-xl" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-rosae-dark-gray border-gray-600">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-gray-400 text-sm">Total Entries</p>
+                    <p className="text-3xl font-bold text-white" data-testid="text-total-entries">
+                      {filteredExpenses.length}
+                    </p>
+                  </div>
+                  <div className="w-12 h-12 bg-green-500/20 rounded-lg flex items-center justify-center">
+                    <Calendar className="text-green-400 text-xl" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="bg-rosae-dark-gray border-gray-600">
+            <CardContent className="p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-semibold text-white" data-testid="text-expenses-list-title">All Expenses</h3>
+                {(selectedCategory || dateRange.startDate || dateRange.endDate) && (
+                  <div className="flex items-center space-x-2 text-sm text-gray-400">
+                    <span>Filtered by:</span>
+                    {selectedCategory && (
+                      <span className="px-2 py-1 bg-blue-600/20 text-blue-400 rounded-full text-xs font-medium">
+                        {selectedCategory}
+                      </span>
                     )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="description"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-gray-300">Description</FormLabel>
-                        <FormControl>
-                          <Textarea
-                            placeholder="Describe the expense..."
-                            className="bg-gray-800 border-gray-600 text-white resize-none"
-                            rows={3}
-                            data-testid="textarea-description"
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
+                    {(dateRange.startDate || dateRange.endDate) && (
+                      <span className="px-2 py-1 bg-green-600/20 text-green-400 rounded-full text-xs font-medium">
+                        {dateRange.startDate ? formatDate(dateRange.startDate) : 'Any'} - {dateRange.endDate ? formatDate(dateRange.endDate) : 'Any'}
+                      </span>
                     )}
-                  />
-
-                  <div className="flex justify-end space-x-4">
                     <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setIsExpenseModalOpen(false)}
-                      className="border-gray-600 text-gray-300 hover:bg-gray-700"
-                      data-testid="button-cancel-expense"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-gray-400 hover:text-white hover:bg-gray-700"
+                      onClick={() => {
+                        setSelectedCategory("");
+                        setDateRange({ startDate: "", endDate: "" });
+                      }}
                     >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="submit"
-                      disabled={createExpenseMutation.isPending}
-                      className="bg-rosae-red hover:bg-rosae-dark-red"
-                      data-testid="button-save-expense"
-                    >
-                      {createExpenseMutation.isPending ? "Saving..." : "Save Expense"}
+                      <X className="h-3 w-3" />
                     </Button>
                   </div>
-                </form>
-              </Form>
-            </DialogContent>
-          </Dialog>
+                )}
+              </div>
+              {isExpensesLoading ? (
+                <div className="flex items-center justify-center h-64 text-gray-400">
+                  Loading expenses...
+                </div>
+              ) : expensesArray.length > 0 ? (
+                <div ref={printSectionRef}>
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="text-left text-gray-400 text-sm border-b border-gray-600">
+                          <th className="pb-3">Date</th>
+                          <th className="pb-3">Category</th>
+                          <th className="pb-3">Description</th>
+                          <th className="pb-3">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-white">
+                        {filteredExpenses.map((expense: any) => (
+                          <tr key={expense.id} className="border-b border-gray-700 hover:bg-gray-800/50" data-testid={`row-expense-${expense.id}`}>
+                            <td className="py-4">
+                              <div className="flex items-center">
+                                <Calendar className="w-4 h-4 text-gray-400 mr-2" />
+                                {formatDate(expense.expenseDate)}
+                              </div>
+                            </td>
+                            <td className="py-4">
+                              <span className="px-3 py-1 bg-blue-600/20 text-blue-400 rounded-full text-xs font-medium">
+                                {expense.category}
+                              </span>
+                            </td>
+                            <td className="py-4 text-gray-300 max-w-xs truncate">{expense.description}</td>
+                            <td className="py-4 font-semibold">
+                              <div className="flex items-center text-rosae-red">
+                                <IndianRupee className="w-4 h-4 mr-1" />
+                                {formatCurrency(Number(expense.amount))}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-16">
+                  <IndianRupee className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold text-white mb-2">No Expenses Found</h3>
+                  <p className="text-gray-400 mb-6">Start by recording your first expense</p>
+                  <Button
+                    onClick={() => setIsExpenseModalOpen(true)}
+                    className="bg-rosae-red hover:bg-rosae-dark-red"
+                    data-testid="button-create-first-expense"
+                  >
+                    <Plus className="mr-2 w-4 h-4" />
+                    Add First Expense
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
-
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <Card className="bg-rosae-dark-gray border-gray-600">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-gray-400 text-sm">Total Expenses</p>
-                  <p className="text-3xl font-bold text-white" data-testid="text-total-expenses">
-                    {formatCurrency(totalExpenses)}
-                  </p>
-                </div>
-                <div className="w-12 h-12 bg-rosae-red/20 rounded-lg flex items-center justify-center">
-                  <IndianRupee className="text-rosae-red text-xl" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-rosae-dark-gray border-gray-600">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-gray-400 text-sm">Categories</p>
-                  <p className="text-3xl font-bold text-white" data-testid="text-categories-count">
-                    {Object.keys(expensesByCategory).length}
-                  </p>
-                </div>
-                <div className="w-12 h-12 bg-blue-500/20 rounded-lg flex items-center justify-center">
-                  <Tag className="text-blue-400 text-xl" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-rosae-dark-gray border-gray-600">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-gray-400 text-sm">Total Entries</p>
-                  <p className="text-3xl font-bold text-white" data-testid="text-total-entries">
-                    {expenses?.length || 0}
-                  </p>
-                </div>
-                <div className="w-12 h-12 bg-green-500/20 rounded-lg flex items-center justify-center">
-                  <Calendar className="text-green-400 text-xl" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Expenses List */}
-        <Card className="bg-rosae-dark-gray border-gray-600">
-          <CardContent className="p-6">
-            <h3 className="text-xl font-semibold text-white mb-6" data-testid="text-expenses-list-title">All Expenses</h3>
-            {isExpensesLoading ? (
-              <div className="flex items-center justify-center h-64 text-gray-400">
-                Loading expenses...
-              </div>
-            ) : expensesArray.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="text-left text-gray-400 text-sm border-b border-gray-600">
-                      <th className="pb-3">Date</th>
-                      <th className="pb-3">Category</th>
-                      <th className="pb-3">Description</th>
-                      <th className="pb-3">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody className="text-white">
-                    {expensesArray.map((expense: any) => (
-                      <tr key={expense.id} className="border-b border-gray-700 hover:bg-gray-800/50" data-testid={`row-expense-${expense.id}`}>
-                        <td className="py-4">
-                          <div className="flex items-center">
-                            <Calendar className="w-4 h-4 text-gray-400 mr-2" />
-                            {formatDate(expense.expenseDate)}
-                          </div>
-                        </td>
-                        <td className="py-4">
-                          <span className="px-3 py-1 bg-blue-600/20 text-blue-400 rounded-full text-xs font-medium">
-                            {expense.category}
-                          </span>
-                        </td>
-                        <td className="py-4 text-gray-300 max-w-xs truncate">{expense.description}</td>
-                        <td className="py-4 font-semibold">
-                          <div className="flex items-center text-rosae-red">
-                            <IndianRupee className="w-4 h-4 mr-1" />
-                            {formatCurrency(Number(expense.amount))}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="text-center py-16">
-                <IndianRupee className="w-16 h-16 text-gray-500 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold text-white mb-2">No Expenses Found</h3>
-                <p className="text-gray-400 mb-6">Start by recording your first expense</p>
-                <Button 
-                  onClick={() => setIsExpenseModalOpen(true)}
-                  className="bg-rosae-red hover:bg-rosae-dark-red"
-                  data-testid="button-create-first-expense"
-                >
-                  <Plus className="mr-2 w-4 h-4" />
-                  Add First Expense
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
       </div>
     </div>
   );
