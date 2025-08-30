@@ -85,3 +85,36 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
   (req as any).user = sessionUser;
   next();
 };
+
+// Role-based access control middleware
+export const requireRole = (allowedRoles: string[]): RequestHandler => {
+  return async (req, res, next) => {
+    const user = (req as any).user;
+    
+    if (!user) {
+      return res.status(401).json({ message: "Unauthorized - Please login" });
+    }
+
+    // Get user role from database
+    try {
+      const dbUser = await storage.getUserById(user.claims.sub);
+      const userRole = dbUser?.role || 'employee';
+      
+      if (!allowedRoles.includes(userRole)) {
+        return res.status(403).json({ 
+          message: `Access denied. Required role: ${allowedRoles.join(' or ')}. Your role: ${userRole}` 
+        });
+      }
+      
+      // Attach role to request for easy access
+      (req as any).userRole = userRole;
+      next();
+    } catch (error) {
+      console.error("Error checking user role:", error);
+      return res.status(500).json({ message: "Error verifying user permissions" });
+    }
+  };
+};
+
+// Convenience middleware for admin-only access
+export const requireAdmin: RequestHandler = requireRole(['admin']);

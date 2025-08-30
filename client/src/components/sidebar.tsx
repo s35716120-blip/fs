@@ -19,7 +19,8 @@ import {
   MoreHorizontal,
   TrendingUp,
   Target,
-  IndianRupee
+  IndianRupee,
+  UserCheck
 } from "lucide-react";
 
 const navigationItems = [
@@ -48,6 +49,11 @@ const navigationItems = [
     name: "Verification",
     href: "/verification",
     icon: ClipboardCheck,
+  },
+  {
+    name: "CRM",
+    href: "/crm",
+    icon: UserCheck,
   },
   {
     name: "Expenses",
