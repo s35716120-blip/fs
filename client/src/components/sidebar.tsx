@@ -20,7 +20,8 @@ import {
   TrendingUp,
   Target,
   IndianRupee,
-  UserCheck
+  UserCheck,
+  CalendarDays
 } from "lucide-react";
 
 const navigationItems = [
@@ -46,14 +47,14 @@ const navigationItems = [
     icon: PieChart,
   },
   {
-    name: "Verification",
-    href: "/verification",
-    icon: ClipboardCheck,
-  },
-  {
     name: "CRM",
     href: "/crm",
     icon: UserCheck,
+  },
+  {
+    name: "Follow-ups",
+    href: "/follow-ups",
+    icon: CalendarDays,
   },
   {
     name: "Expenses",

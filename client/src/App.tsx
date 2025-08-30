@@ -16,8 +16,8 @@ import DailyIncomePage from "@/pages/daily-income";
 import LeaveManagement from "@/pages/leave-management";
 import UserManagement from "@/pages/user-management";
 import Configuration from "@/pages/configuration";
-import Verification from "@/pages/verification";
 import CRM from "@/pages/crm";
+import FollowUps from "@/pages/follow-ups";
 import AdminSettings from "@/pages/admin-settings";
 import NotFound from "@/pages/not-found";
 
@@ -48,8 +48,8 @@ function Router() {
       <Route path="/leave-management" component={LeaveManagement} />
       <Route path="/user-management" component={UserManagement} />
       <Route path="/configuration" component={Configuration} />
-      <Route path="/verification" component={Verification} />
       <Route path="/crm" component={CRM} />
+      <Route path="/follow-ups" component={FollowUps} />
       <Route path="/admin-settings" component={AdminSettings} />
       <Route component={NotFound} />
     </Switch>

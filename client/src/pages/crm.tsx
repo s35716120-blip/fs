@@ -46,7 +46,8 @@ import {
   PhoneCall,
   MessageCircle,
   Gift,
-  Ticket
+  Ticket,
+  CalendarDays
 } from "lucide-react";
 
 export default function CRM() {
@@ -400,11 +401,19 @@ export default function CRM() {
 
     toast({
       title: "Follow-up Scheduled",
-      description: `Follow-up scheduled for ${formatDate(followUpDate)}`,
+      description: `Follow-up scheduled for ${formatDate(followUpDate)}. View all follow-ups in the Follow-ups section.`,
     });
     
     setFollowUpDate("");
     setFollowUpNote("");
+  };
+
+  // Open WhatsApp chat
+  const openWhatsApp = (phoneNumber: string) => {
+    // Remove any non-digit characters and format for WhatsApp
+    const cleanNumber = phoneNumber.replace(/\D/g, '');
+    const whatsappUrl = `https://wa.me/${cleanNumber}`;
+    window.open(whatsappUrl, '_blank');
   };
 
   // Export customer data
@@ -1145,21 +1154,19 @@ export default function CRM() {
                     
                     {/* Quick Actions */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <Button className="bg-blue-600 hover:bg-blue-700 h-16 flex-col">
-                        <PhoneCall className="w-6 h-6 mb-2" />
-                        Call Customer
-                      </Button>
-                      <Button className="bg-green-600 hover:bg-green-700 h-16 flex-col">
+                      <Button 
+                        onClick={() => openWhatsApp(selectedBooking.phoneNumber)}
+                        className="bg-green-600 hover:bg-green-700 h-16 flex-col"
+                      >
                         <MessageCircle className="w-6 h-6 mb-2" />
-                        Send Message
+                        WhatsApp Chat
                       </Button>
-                      <Button className="bg-purple-600 hover:bg-purple-700 h-16 flex-col">
-                        <Mail className="w-6 h-6 mb-2" />
-                        Send Email
-                      </Button>
-                      <Button className="bg-orange-600 hover:bg-orange-700 h-16 flex-col">
-                        <Gift className="w-6 h-6 mb-2" />
-                        Send Offer
+                      <Button 
+                        onClick={() => window.location.href = '/follow-ups'}
+                        className="bg-blue-600 hover:bg-blue-700 h-16 flex-col"
+                      >
+                        <CalendarDays className="w-6 h-6 mb-2" />
+                        View Follow-ups
                       </Button>
                     </div>
 
@@ -1200,10 +1207,20 @@ export default function CRM() {
                             className="bg-gray-700 border-gray-600 text-white"
                           />
                         </div>
-                        <Button onClick={scheduleFollowUp} className="bg-rosae-red hover:bg-rosae-dark-red">
-                          <Calendar className="w-4 h-4 mr-2" />
-                          Schedule Follow-up
-                        </Button>
+                        <div className="flex gap-2">
+                          <Button onClick={scheduleFollowUp} className="bg-rosae-red hover:bg-rosae-dark-red">
+                            <Calendar className="w-4 h-4 mr-2" />
+                            Schedule Follow-up
+                          </Button>
+                          <Button 
+                            onClick={() => window.location.href = '/follow-ups'}
+                            variant="outline" 
+                            className="border-gray-600 text-gray-300"
+                          >
+                            <CalendarDays className="w-4 h-4 mr-2" />
+                            View All Follow-ups
+                          </Button>
+                        </div>
                       </CardContent>
                     </Card>
 
