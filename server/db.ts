@@ -173,5 +173,41 @@ export function initializeDatabase() {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (created_by) REFERENCES users(id)
     );
+
+    CREATE TABLE IF NOT EXISTS daily_income (
+      id TEXT PRIMARY KEY DEFAULT (
+        hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
+        substr(hex(randomblob(2)),2) || '-' ||
+        substr('89ab',abs(random()) % 4 + 1, 1) ||
+        substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6))
+      ),
+      date TEXT NOT NULL,
+      number_of_shows INTEGER NOT NULL,
+      cash_received REAL NOT NULL DEFAULT 0,
+      upi_received REAL NOT NULL DEFAULT 0,
+      other_payments REAL NOT NULL DEFAULT 0,
+      notes TEXT,
+      created_by TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (created_by) REFERENCES users(id)
+    );
   `);
+
+  // Insert sample data for daily income if table is empty
+  try {
+    const count = sqlite.prepare(`SELECT COUNT(*) as count FROM daily_income`).get() as any;
+    if (count.count === 0) {
+      sqlite.exec(`
+        INSERT INTO daily_income (
+          date, number_of_shows, cash_received, upi_received, other_payments, notes
+        ) VALUES 
+        ('2025-08-30', 3, 5000, 3000, 2000, 'Weekend shows'),
+        ('2025-08-31', 2, 4000, 2500, 0, 'Weekday low')
+      `);
+      console.log("Sample daily income data inserted");
+    }
+  } catch (error) {
+    console.log("Note: Could not insert sample daily income data:", error);
+  }
 }

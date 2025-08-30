@@ -12,6 +12,7 @@ import Analytics from "@/pages/analytics";
 import Expenses from "@/pages/expenses";
 import AdSpendPage from "@/pages/ad-spend";
 import AdAnalyticsPage from "@/pages/ad-analytics";
+import DailyIncomePage from "@/pages/daily-income";
 import LeaveManagement from "@/pages/leave-management";
 import UserManagement from "@/pages/user-management";
 import Configuration from "@/pages/configuration";
@@ -42,6 +43,7 @@ function Router() {
       <Route path="/expenses" component={Expenses} />
       <Route path="/ad-spend" component={AdSpendPage} />
       <Route path="/ad-analytics" component={AdAnalyticsPage} />
+      <Route path="/daily-income" component={DailyIncomePage} />
       <Route path="/leave-management" component={LeaveManagement} />
       <Route path="/user-management" component={UserManagement} />
       <Route path="/configuration" component={Configuration} />

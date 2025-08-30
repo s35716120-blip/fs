@@ -924,6 +924,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Daily Income routes
+  app.get("/api/daily-income", isAuthenticated, async (req: any, res) => {
+    try {
+      const { startDate, endDate, paymentType } = req.query;
+      const filters = {
+        startDate: startDate as string,
+        endDate: endDate as string,
+        paymentType: paymentType as string
+      };
+      
+      const dailyIncomes = await storage.getDailyIncomes(filters);
+      res.json(dailyIncomes);
+    } catch (error) {
+      console.error("Error fetching daily incomes:", error);
+      res.status(500).json({ message: "Failed to fetch daily incomes" });
+    }
+  });
+
+  app.post("/api/daily-income", isAuthenticated, async (req: any, res) => {
+    try {
+      const { insertDailyIncomeSchema } = await import("@shared/schema");
+      const userId = req.user.claims.sub;
+      
+      const data = insertDailyIncomeSchema.parse(req.body);
+      const dailyIncomeData = {
+        ...data,
+        createdBy: userId
+      };
+      
+      const result = await storage.createDailyIncome(dailyIncomeData);
+      res.json(result);
+    } catch (error) {
+      console.error("Error creating daily income:", error);
+      res.status(500).json({ message: "Failed to create daily income" });
+    }
+  });
+
+  app.put("/api/daily-income/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { insertDailyIncomeSchema } = await import("@shared/schema");
+      const { id } = req.params;
+      
+      const data = insertDailyIncomeSchema.parse(req.body);
+      const result = await storage.updateDailyIncome(id, data);
+      
+      if (!result) {
+        return res.status(404).json({ message: "Daily income record not found" });
+      }
+      
+      res.json(result);
+    } catch (error) {
+      console.error("Error updating daily income:", error);
+      res.status(500).json({ message: "Failed to update daily income" });
+    }
+  });
+
+  app.delete("/api/daily-income/:id", isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const result = await storage.deleteDailyIncome(id);
+      
+      if (!result) {
+        return res.status(404).json({ message: "Daily income record not found" });
+      }
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting daily income:", error);
+      res.status(500).json({ message: "Failed to delete daily income" });
+    }
+  });
+
   app.get("/api/expenses", isAuthenticated, async (req: any, res) => {
     try {
       const { limit } = req.query;

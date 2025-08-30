@@ -2,7 +2,7 @@ import { sql, eq, desc, and, like } from "drizzle-orm";
 import { db } from "./db";
 import { 
   users, bookings, expenses, leaveApplications, activityLogs, 
-  calendarEvents, salesReports, configurations, adSpends 
+  calendarEvents, salesReports, configurations, adSpends, dailyIncome 
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
@@ -514,5 +514,49 @@ export const storage = {
       ...reportData
     }).returning();
     return result[0];
+  },
+
+  // Daily Income operations
+  async getDailyIncomes(filters?: { startDate?: string; endDate?: string; paymentType?: string }) {
+    let whereConditions = [];
+    
+    if (filters?.startDate) {
+      whereConditions.push(sql`${dailyIncome.date} >= ${filters.startDate}`);
+    }
+    
+    if (filters?.endDate) {
+      whereConditions.push(sql`${dailyIncome.date} <= ${filters.endDate}`);
+    }
+    
+    return db.query.dailyIncome.findMany({
+      where: whereConditions.length > 0 ? and(...whereConditions) : undefined,
+      orderBy: [desc(dailyIncome.date)]
+    });
+  },
+
+  async createDailyIncome(incomeData: any) {
+    const result = await db.insert(dailyIncome).values(incomeData).returning();
+    return result[0];
+  },
+
+  async updateDailyIncome(id: string, incomeData: any) {
+    const result = await db.update(dailyIncome)
+      .set({ ...incomeData, updatedAt: sql`(CURRENT_TIMESTAMP)` })
+      .where(eq(dailyIncome.id, id))
+      .returning();
+    return result[0];
+  },
+
+  async deleteDailyIncome(id: string) {
+    const result = await db.delete(dailyIncome)
+      .where(eq(dailyIncome.id, id))
+      .returning();
+    return result[0];
+  },
+
+  async getDailyIncomeById(id: string) {
+    return db.query.dailyIncome.findFirst({
+      where: eq(dailyIncome.id, id)
+    });
   }
 };

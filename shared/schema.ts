@@ -187,6 +187,25 @@ export const salesReports = sqliteTable("sales_reports", {
   createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
 });
 
+// Daily Income
+export const dailyIncome = sqliteTable("daily_income", {
+  id: text("id").primaryKey().default(
+    sql`(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
+         substr(hex(randomblob(2)),2) || '-' ||
+         substr('89ab',abs(random()) % 4 + 1, 1) ||
+         substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))`
+  ),
+  date: text("date").notNull(), // stored as YYYY-MM-DD
+  numberOfShows: integer("number_of_shows").notNull(),
+  cashReceived: real("cash_received").notNull().default(0),
+  upiReceived: real("upi_received").notNull().default(0),
+  otherPayments: real("other_payments").notNull().default(0),
+  notes: text("notes"),
+  createdBy: text("created_by").references(() => users.id),
+  createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
+  updatedAt: text("updated_at").default(sql`(CURRENT_TIMESTAMP)`),
+});
+
 // Configurations
 export const configurations = sqliteTable("configurations", {
   key: text("key").primaryKey(),
@@ -281,6 +300,21 @@ export const insertSalesReportSchema = createInsertSchema(salesReports).omit({
   createdAt: true,
 });
 
+// Daily Income insert schema
+export const insertDailyIncomeSchema = createInsertSchema(dailyIncome).omit({
+  id: true,
+  createdBy: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  date: z.string().min(1), // YYYY-MM-DD
+  numberOfShows: z.coerce.number().min(1),
+  cashReceived: z.coerce.number().min(0),
+  upiReceived: z.coerce.number().min(0),
+  otherPayments: z.coerce.number().min(0),
+  notes: z.string().optional(),
+});
+
 export const insertConfigurationSchema = createInsertSchema(configurations).omit({
   updatedAt: true,
 });
@@ -303,3 +337,5 @@ export type InsertCalendarEvent = z.infer<typeof insertCalendarEventSchema>;
 export type CalendarEvent = typeof calendarEvents.$inferSelect;
 export type InsertSalesReport = z.infer<typeof insertSalesReportSchema>;
 export type SalesReport = typeof salesReports.$inferSelect;
+export type InsertDailyIncome = z.infer<typeof insertDailyIncomeSchema>;
+export type DailyIncome = typeof dailyIncome.$inferSelect;

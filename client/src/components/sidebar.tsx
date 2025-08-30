@@ -18,7 +18,8 @@ import {
   X,
   MoreHorizontal,
   TrendingUp,
-  Target
+  Target,
+  IndianRupee
 } from "lucide-react";
 
 const navigationItems = [
@@ -62,6 +63,11 @@ const navigationItems = [
     name: "Customer Tickets",
     href: "/customer-tickets", 
     icon: Ticket,
+  },
+  {
+    name: "Daily Income",
+    href: "/daily-income",
+    icon: IndianRupee,
   },
 ];
 
