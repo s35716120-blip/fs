@@ -595,6 +595,148 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Booking routes
+
+  // Search bookings by phone (optionally filter client-side by date/time)
+  app.get("/api/bookings/search", isAuthenticated, async (req: any, res) => {
+    try {
+      const phone = String(req.query.phone || '').trim();
+      if (!phone) return res.json([]);
+      const rows = await storage.getBookingsByPhoneNumber(phone);
+      res.json(rows);
+    } catch (error) {
+      console.error('Error searching bookings by phone:', error);
+      res.status(500).json({ message: 'Failed to search bookings' });
+    }
+  });
+
+  // Create refund request (employee/admin)
+  app.post("/api/bookings/:id/refund-request", isAuthenticated, async (req: any, res) => {
+    try {
+      const requesterId = req.user.claims.sub;
+      const { id } = req.params as any;
+      const { amount, reason } = req.body || {};
+      if (typeof amount !== 'number' || amount < 0.01 || !reason) {
+        return res.status(400).json({ message: 'amount (number) and reason are required' });
+      }
+      const booking = await storage.getBookingById(id);
+      if (!booking) return res.status(404).json({ message: 'Booking not found' });
+
+      const created = await storage.createRefundRequest({ bookingId: id, amount, reason, requestedBy: requesterId });
+
+      // Notify admins
+      try {
+        const admins = await storage.getAllUsers();
+        for (const u of admins as any[]) {
+          if ((u as any).role === 'admin') {
+            await storage.createNotification({ userId: (u as any).id, title: 'Refund Request', body: `${booking.customerName} • ₹${amount} • ${reason}`, type: 'refund', relatedType: 'refund_request', relatedId: (created as any).id });
+          }
+        }
+      } catch {}
+
+      res.status(201).json(created);
+    } catch (error) {
+      console.error('Error creating refund request:', error);
+      res.status(500).json({ message: 'Failed to create refund request' });
+    }
+  });
+
+  // List refund requests (optionally by status)
+  app.get("/api/refund-requests", isAuthenticated, async (req: any, res) => {
+    try {
+      const status = (req.query.status as any) || undefined;
+      const rows = await storage.listRefundRequests({ status });
+      res.json(rows);
+    } catch (error) {
+      console.error('Error listing refund requests:', error);
+      res.status(500).json({ message: 'Failed to list refund requests' });
+    }
+  });
+
+  // Approve refund (admin only)
+  app.patch("/api/refund-requests/:id/approve", isAuthenticated, async (req: any, res) => {
+    try {
+      const user = req.user;
+      const isAdmin = user?.claims?.email === 'admin@rosae.com' || user?.claims?.role === 'admin';
+      if (!isAdmin) return res.status(403).json({ message: 'Only admins can approve refunds' });
+
+      const { id } = req.params as any;
+      const updated = await storage.approveRefundRequest(id, user.claims.sub);
+      if (!updated) return res.status(404).json({ message: 'Refund request not found' });
+      res.json(updated);
+    } catch (error) {
+      console.error('Error approving refund request:', error);
+      res.status(500).json({ message: 'Failed to approve refund request' });
+    }
+  });
+
+  // Reject refund (admin only)
+  app.patch("/api/refund-requests/:id/reject", isAuthenticated, async (req: any, res) => {
+    try {
+      const user = req.user;
+      const isAdmin = user?.claims?.email === 'admin@rosae.com' || user?.claims?.role === 'admin';
+      if (!isAdmin) return res.status(403).json({ message: 'Only admins can reject refunds' });
+
+      const { id } = req.params as any;
+      const updated = await storage.rejectRefundRequest(id, user.claims.sub);
+      if (!updated) return res.status(404).json({ message: 'Refund request not found' });
+      res.json(updated);
+    } catch (error) {
+      console.error('Error rejecting refund request:', error);
+      res.status(500).json({ message: 'Failed to reject refund request' });
+    }
+  });
+
+  // Daily Income routes
+  app.get("/api/daily-income", isAuthenticated, async (req: any, res) => {
+    try {
+      const { startDate, endDate, paymentType } = req.query as any;
+      const rows = await storage.listDailyIncome({ startDate, endDate, paymentType });
+      res.json(rows);
+    } catch (error) {
+      console.error('Error listing daily income:', error);
+      res.status(500).json({ message: 'Failed to list daily income' });
+    }
+  });
+  app.post("/api/daily-income", isAuthenticated, async (req: any, res) => {
+    try {
+      const row = await storage.createDailyIncome(req.body);
+      res.status(201).json(row);
+    } catch (error) {
+      console.error('Error creating daily income:', error);
+      res.status(500).json({ message: 'Failed to create daily income' });
+    }
+  });
+  app.put("/api/daily-income/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const updated = await storage.updateDailyIncome(req.params.id, req.body);
+      res.json(updated);
+    } catch (error) {
+      console.error('Error updating daily income:', error);
+      res.status(500).json({ message: 'Failed to update daily income' });
+    }
+  });
+  app.delete("/api/daily-income/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      await storage.deleteDailyIncome(req.params.id);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Error deleting daily income:', error);
+      res.status(500).json({ message: 'Failed to delete daily income' });
+    }
+  });
+
+  // Sync Daily Income from bookings (compute adjustedRevenue and refundTotal)
+  app.post("/api/daily-income/sync", isAuthenticated, async (req: any, res) => {
+    try {
+      const { startDate, endDate, mode } = req.body || {};
+      const out = await storage.syncDailyIncomeFromBookings({ startDate, endDate, mode });
+      res.json(out);
+    } catch (error) {
+      console.error('Error syncing daily income:', error);
+      res.status(500).json({ message: 'Failed to sync daily income' });
+    }
+  });
+
   app.post("/api/bookings", isAuthenticated, async (req: any, res) => {
     try {
       console.log("Session:", req.session);
@@ -658,9 +800,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.upsertUser({
             id: userId,
             email: req.user.claims.email || "admin@rosae.com",
-            first_name: req.user.claims.first_name || "Admin",
-            last_name: req.user.claims.last_name || "User",
-            profile_image_url: req.user.claims.profile_image_url || null,
+            firstName: req.user.claims.first_name || req.user.claims.firstName || "Admin",
+            lastName: req.user.claims.last_name || req.user.claims.lastName || "User",
+            profileImageUrl: req.user.claims.profile_image_url || req.user.claims.profileImageUrl || null,
             role: "admin",
           });
           console.log("User created successfully via storage API");
@@ -692,9 +834,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const defaultAdmin = {
             id: "admin-001",
             email: "admin@rosae.com",
-            first_name: "Admin",
-            last_name: "User",
-            profile_image_url: null,
+            firstName: "Admin",
+            lastName: "User",
+            profileImageUrl: null,
             role: "admin",
           };
 
@@ -727,9 +869,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       res.json(booking);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating booking:", error);
-      res.status(500).json({ message: "Failed to create booking" });
+      if (error.name === 'ZodError') {
+        const details = error.errors?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ');
+        return res.status(400).json({ message: 'Validation failed', details, errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create booking", details: error?.message });
     }
   });
 

@@ -36,6 +36,7 @@ const navigationItems = [
   { name: "Feedback Management", href: "/feedback-management", icon: Calendar },
   { name: "Follow-ups", href: "/follow-ups", icon: CalendarDays },
   { name: "Customer Tickets", href: "/customer-tickets", icon: Ticket },
+  { name: "Refunds", href: "/refunds", icon: Wallet },
   { name: "Leave Management", href: "/leave-management", icon: Calendar },
 ];
 

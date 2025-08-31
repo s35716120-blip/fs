@@ -37,7 +37,15 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 
-const INR = (n: number) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
+// Currency formatting helpers
+const INR_FULL = (n: number) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
+const INR_COMPACT = (n: number) => {
+  const val = Number(n || 0);
+  if (val >= 1_00_00_000) return `₹${(val / 1_00_00_000).toFixed(2)}Cr`; // Crores
+  if (val >= 1_00_000) return `₹${(val / 1_00_000).toFixed(2)}L`; // Lakhs
+  return `₹${val.toLocaleString('en-IN')}`;
+};
+const INR = (n: number, compact: boolean) => compact ? INR_COMPACT(n) : INR_FULL(n);
 const safeDiv = (num: number, den: number) => den > 0 ? (num / den) : 0;
 const fmt = (v: number) => isFinite(v) && v > 0 ? v.toFixed(2) : "—";
 
@@ -55,9 +63,14 @@ const KpiCard = ({ title, value, subtitle, icon: Icon, color = "text-white" }: {
         <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide group-hover:text-gray-300 transition-colors">{title}</h3>
         {Icon && <Icon className="w-6 h-6 text-rosae-red group-hover:scale-110 transition-transform duration-300" />}
       </div>
-      <div className="flex items-end justify-between">
-        <div>
-          <p className={`text-3xl font-bold mb-1 ${color} group-hover:scale-105 transition-transform duration-300`}>{value}</p>
+      <div className="flex items-end justify-between min-w-0">
+        <div className="min-w-0">
+          <p
+            title={value}
+            className={`text-2xl md:text-3xl font-bold mb-1 ${color} group-hover:scale-105 transition-transform duration-300 tabular-nums truncate leading-tight`}
+          >
+            {value}
+          </p>
           {subtitle && <p className="text-xs text-gray-500 group-hover:text-gray-400 transition-colors">{subtitle}</p>}
         </div>
       </div>
@@ -79,6 +92,9 @@ export default function DailyIncomePage() {
     endDate: '',
     paymentType: 'all'
   });
+
+  // UX: compact currency toggle (default ON)
+  const [compactCurrency, setCompactCurrency] = useState(true);
 
   const form = useForm({
     resolver: zodResolver(insertDailyIncomeSchema),
@@ -176,34 +192,49 @@ export default function DailyIncomePage() {
     },
   });
 
-  // Calculate KPIs
+  // Calculate KPIs (include net after refunds if provided by server)
   const kpis = useMemo(() => {
-    const totalShows = records.reduce((sum, r) => sum + Number(r.numberOfShows || 0), 0);
-    const totalCash = records.reduce((sum, r) => sum + Number(r.cashReceived || 0), 0);
-    const totalUpi = records.reduce((sum, r) => sum + Number(r.upiReceived || 0), 0);
+    const totalShows = records.reduce((sum, r) => sum + Number((r.adjustedShows ?? r.numberOfShows) || 0), 0);
+    const totalCash = records.reduce((sum, r) => sum + Number((r.adjustedCashReceived ?? r.cashReceived) || 0), 0);
+    const totalUpi = records.reduce((sum, r) => sum + Number((r.adjustedUpiReceived ?? r.upiReceived) || 0), 0);
     const totalOther = records.reduce((sum, r) => sum + Number(r.otherPayments || 0), 0);
-    const grandTotal = totalCash + totalUpi + totalOther;
-    const avgPerShow = safeDiv(grandTotal, totalShows);
+
+    // Gross and net totals (prefer adjustedRevenue if provided)
+    const grossTotal = totalCash + totalUpi + totalOther;
+    const totalRefunds = records.reduce((sum, r) => sum + Number(r.refundTotal || 0), 0);
+    const adjustedSum = records.reduce((sum, r) => sum + Number(r.adjustedRevenue ?? 0), 0);
+    const netTotal = Math.max(0, adjustedSum || (grossTotal - totalRefunds));
+
+    const avgPerShow = safeDiv(netTotal, totalShows);
 
     return {
       totalShows,
       totalCash,
       totalUpi,
       totalOther,
-      grandTotal,
+      grossTotal,
+      totalRefunds,
+      netTotal,
       avgPerShow
-    };
+    } as any;
   }, [records]);
 
   // Enhanced records with calculations
   const enhancedRecords = useMemo(() => {
     return records.map(record => {
-      const totalIncome = Number(record.cashReceived || 0) + Number(record.upiReceived || 0) + Number(record.otherPayments || 0);
-      const avgPerShow = safeDiv(totalIncome, Number(record.numberOfShows || 0));
+      const cash = Number((record.adjustedCashReceived ?? record.cashReceived) || 0);
+      const upi = Number((record.adjustedUpiReceived ?? record.upiReceived) || 0);
+      const other = Number(record.otherPayments || 0);
+      const grossIncome = cash + upi + other;
+      const refund = Number(record.refundTotal || 0);
+      const netIncome = Number(record.adjustedRevenue ?? Math.max(0, grossIncome - refund));
+      const shows = Number((record.adjustedShows ?? record.numberOfShows ?? 0));
+      const avgPerShow = safeDiv(netIncome, shows);
       
       return {
         ...record,
-        totalIncome,
+        totalIncome: grossIncome,
+        netIncome,
         avgPerShow
       };
     });
@@ -370,9 +401,11 @@ export default function DailyIncomePage() {
 
   const handleExportCSV = () => {
     const headers = ['Date', 'Shows', 'Cash', 'UPI', 'Other', 'Total Income', 'Avg/Show', 'Notes'];
+    // Export all filtered records (not just current page)
+    const rows = enhancedRecords; 
     const csvData = [
       headers,
-      ...enhancedRecords.map(record => [
+      ...rows.map(record => [
         formatDate(record.date),
         record.numberOfShows,
         record.cashReceived,
@@ -390,7 +423,10 @@ export default function DailyIncomePage() {
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `daily-income-${new Date().toISOString().split('T')[0]}.csv`);
+    const monthPart = (filters.startDate && filters.endDate && filters.startDate.slice(0,7) === filters.endDate.slice(0,7))
+      ? filters.startDate.slice(0,7)
+      : new Date().toISOString().split('T')[0].slice(0,7);
+    link.setAttribute('download', `daily-income-${monthPart}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -447,6 +483,17 @@ export default function DailyIncomePage() {
             >
               <FileSpreadsheet className="w-4 h-4 mr-2"/> Export CSV
             </Button>
+            <div className="flex items-center gap-2 border border-gray-600 rounded px-3 py-2 text-sm">
+              <EyeOff className="w-4 h-4 text-gray-400" />
+              <span className="text-gray-300">Compact numbers</span>
+              <input
+                type="checkbox"
+                className="accent-rosae-red"
+                checked={compactCurrency}
+                onChange={(e) => setCompactCurrency(e.target.checked)}
+                title="Toggle compact INR format"
+              />
+            </div>
             <Button 
               variant="outline" 
               className="border-gray-600 hover:border-blue-500 hover:bg-blue-500/10 hover:text-blue-400 transition-all duration-300"
@@ -561,37 +608,37 @@ export default function DailyIncomePage() {
             color="text-blue-400"
           />
           <KpiCard 
-            title="Total Cash" 
-            value={INR(kpis.totalCash)} 
-            subtitle="Cash received"
+            title="Gross Cash" 
+            value={INR(kpis.totalCash, compactCurrency)} 
+            subtitle="Cash received (gross)"
             icon={Banknote}
             color="text-green-400"
           />
           <KpiCard 
-            title="Total UPI" 
-            value={INR(kpis.totalUpi)} 
-            subtitle="UPI received"
+            title="Gross UPI" 
+            value={INR(kpis.totalUpi, compactCurrency)} 
+            subtitle="UPI received (gross)"
             icon={CreditCard}
             color="text-purple-400"
           />
           <KpiCard 
-            title="Total Other" 
-            value={INR(kpis.totalOther)} 
+            title="Other" 
+            value={INR(kpis.totalOther, compactCurrency)} 
             subtitle="Other payments"
             icon={Wallet}
             color="text-orange-400"
           />
           <KpiCard 
-            title="Grand Total" 
-            value={INR(kpis.grandTotal)} 
-            subtitle="Total income"
+            title="Net Total" 
+            value={INR(kpis.netTotal, compactCurrency)} 
+            subtitle={`Gross ${INR(kpis.grossTotal, compactCurrency)} − Refunds ${INR(kpis.totalRefunds, compactCurrency)}`}
             icon={IndianRupee}
             color="text-yellow-400"
           />
           <KpiCard 
             title="Avg/Show" 
-            value={INR(kpis.avgPerShow)} 
-            subtitle="Average per show"
+            value={INR(kpis.avgPerShow, compactCurrency)} 
+            subtitle="Average per show (net)"
             icon={TrendingUp}
             color="text-cyan-400"
           />
@@ -643,7 +690,19 @@ export default function DailyIncomePage() {
                     <TableHead className="text-gray-300 font-semibold text-right">
                       <div className="flex items-center justify-end gap-2">
                         <IndianRupee className="w-4 h-4" />
-                        Total Income
+                        Gross Total
+                      </div>
+                    </TableHead>
+                    <TableHead className="text-gray-300 font-semibold text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <IndianRupee className="w-4 h-4" />
+                        Refunds
+                      </div>
+                    </TableHead>
+                    <TableHead className="text-gray-300 font-semibold text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <IndianRupee className="w-4 h-4" />
+                        Net Total
                       </div>
                     </TableHead>
                     <TableHead className="text-gray-300 font-semibold text-right">
@@ -677,14 +736,16 @@ export default function DailyIncomePage() {
                           </div>
                         </TableCell>
                         <TableCell className="text-white text-center">
-                          <Badge className="rosae-badge-info">{record.numberOfShows}</Badge>
+                          <Badge className="rosae-badge-info">{record.adjustedShows ?? record.numberOfShows}</Badge>
                         </TableCell>
-                        <TableCell className="text-green-400 font-medium text-right">{INR(record.cashReceived)}</TableCell>
-                        <TableCell className="text-purple-400 font-medium text-right">{INR(record.upiReceived)}</TableCell>
-                        <TableCell className="text-orange-400 font-medium text-right">{INR(record.otherPayments)}</TableCell>
-                        <TableCell className="text-yellow-400 font-bold text-right text-lg">{INR(record.totalIncome)}</TableCell>
-                        <TableCell className="text-cyan-400 font-medium text-right">
-                          {fmt(record.avgPerShow) !== "—" ? INR(record.avgPerShow) : "—"}
+                        <TableCell className="text-green-400 font-medium text-right whitespace-nowrap tabular-nums">{INR(record.cashReceived, compactCurrency)}</TableCell>
+                        <TableCell className="text-purple-400 font-medium text-right whitespace-nowrap tabular-nums">{INR(record.upiReceived, compactCurrency)}</TableCell>
+                        <TableCell className="text-orange-400 font-medium text-right whitespace-nowrap tabular-nums">{INR(record.otherPayments, compactCurrency)}</TableCell>
+                        <TableCell className="text-yellow-400 font-bold text-right text-lg whitespace-nowrap tabular-nums">{INR(record.totalIncome, compactCurrency)}</TableCell>
+                        <TableCell className="text-red-400 font-bold text-right whitespace-nowrap tabular-nums">{INR(record.refundTotal || 0, compactCurrency)}</TableCell>
+                        <TableCell className="text-green-300 font-bold text-right whitespace-nowrap tabular-nums">{INR(record.netIncome, compactCurrency)}</TableCell>
+                        <TableCell className="text-cyan-400 font-medium text-right whitespace-nowrap tabular-nums">
+                          {fmt(record.avgPerShow) !== "—" ? INR(record.avgPerShow, compactCurrency) : "—"}
                         </TableCell>
                         <TableCell className="text-gray-300 max-w-xs">
                           <div className="truncate" title={record.notes || ""}>
@@ -733,11 +794,13 @@ export default function DailyIncomePage() {
                       <TableCell className="text-center">
                         <Badge className="rosae-badge-primary font-bold">{kpis.totalShows}</Badge>
                       </TableCell>
-                      <TableCell className="text-green-400 font-bold text-right text-lg">{INR(kpis.totalCash)}</TableCell>
-                      <TableCell className="text-purple-400 font-bold text-right text-lg">{INR(kpis.totalUpi)}</TableCell>
-                      <TableCell className="text-orange-400 font-bold text-right text-lg">{INR(kpis.totalOther)}</TableCell>
-                      <TableCell className="text-yellow-400 font-bold text-right text-xl">{INR(kpis.grandTotal)}</TableCell>
-                      <TableCell className="text-cyan-400 font-bold text-right text-lg">{INR(kpis.avgPerShow)}</TableCell>
+                      <TableCell className="text-green-400 font-bold text-right text-lg whitespace-nowrap tabular-nums">{INR(kpis.totalCash)}</TableCell>
+                      <TableCell className="text-purple-400 font-bold text-right text-lg whitespace-nowrap tabular-nums">{INR(kpis.totalUpi)}</TableCell>
+                      <TableCell className="text-orange-400 font-bold text-right text-lg whitespace-nowrap tabular-nums">{INR(kpis.totalOther)}</TableCell>
+                      <TableCell className="text-yellow-400 font-bold text-right text-xl whitespace-nowrap tabular-nums">{INR(kpis.grossTotal)}</TableCell>
+                      <TableCell className="text-red-400 font-bold text-right text-lg whitespace-nowrap tabular-nums">{INR(kpis.totalRefunds)}</TableCell>
+                      <TableCell className="text-green-300 font-bold text-right text-xl whitespace-nowrap tabular-nums">{INR(kpis.netTotal)}</TableCell>
+                      <TableCell className="text-cyan-400 font-bold text-right text-lg whitespace-nowrap tabular-nums">{INR(kpis.avgPerShow)}</TableCell>
                       <TableCell className="text-gray-400 text-center">—</TableCell>
                       <TableCell className="text-center">—</TableCell>
                     </TableRow>
@@ -748,14 +811,32 @@ export default function DailyIncomePage() {
 
             {/* Pagination controls */}
             {enhancedRecords.length > 0 && (
-              <div className="flex items-center justify-between px-4 py-3 text-gray-300">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-4 py-3 text-gray-300">
                 <div>
                   Showing {startIndex + 1}-{Math.min(endIndex, enhancedRecords.length)} of {enhancedRecords.length} entries
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={currentPage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>Previous</Button>
-                  <span>Page {currentPage} of {totalPages}</span>
-                  <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>Next</Button>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="text-gray-400">Rows per page:</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setPageSize(v);
+                        setCurrentPage(1);
+                      }}
+                      className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-gray-200 focus:outline-none focus:ring-1 focus:ring-rosae-red"
+                    >
+                      <option value={10}>10</option>
+                      <option value={20}>20</option>
+                      <option value={50}>50</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={currentPage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>Previous</Button>
+                    <span>Page {currentPage} of {totalPages}</span>
+                    <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>Next</Button>
+                  </div>
                 </div>
               </div>
             )}

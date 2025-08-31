@@ -19,6 +19,7 @@ import Configuration from "@/pages/configuration";
 import CRM from "@/pages/crm";
 import FollowUps from "@/pages/follow-ups";
 import FeedbackManagement from "@/pages/feedback-management";
+import RefundsPage from "@/pages/refunds";
 import AdminSettings from "@/pages/admin-settings";
 import LoginTrackerPage from "@/pages/login-tracker";
 import NotFound from "@/pages/not-found";
@@ -57,6 +58,7 @@ function Router() {
       <Route path="/crm" component={CRM} />
       <Route path="/follow-ups" component={FollowUps} />
       <Route path="/feedback-management" component={FeedbackManagement} />
+      <Route path="/refunds" component={RefundsPage} />
       <Route path="/admin-settings" component={AdminSettings} />
       <Route path="/customer-tickets" component={CustomerTicketsPage} />
       <Route path="/notifications" component={NotificationsPage} />

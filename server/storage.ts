@@ -3,7 +3,7 @@ import { db } from "./db";
 import { 
   users, bookings, expenses, leaveApplications, activityLogs, 
   calendarEvents, salesReports, configurations, adSpends, dailyIncome, customerTickets, loginTracker,
-  leaveTypes, leaveBalances, notifications, feedbacks, followUps
+  leaveTypes, leaveBalances, notifications, feedbacks, followUps, refundRequests
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -84,9 +84,58 @@ export const storage = {
     return result[0];
   },
 
+  // Refund workflow
+  async createRefundRequest({ bookingId, amount, reason, requestedBy }: { bookingId: string; amount: number; reason: string; requestedBy: string; }) {
+    // Create request
+    const reqRow = (await db.insert(refundRequests).values({ bookingId, amount, reason, status: 'pending', requestedBy }).returning())[0];
+    // Update booking to pending
+    await db.update(bookings)
+      .set({ refundStatus: 'pending', refundAmount: amount, refundReason: reason, refundRequestedBy: requestedBy, updatedAt: sql`(CURRENT_TIMESTAMP)` })
+      .where(eq(bookings.id, bookingId));
+    return reqRow;
+  },
+
+  async listRefundRequests({ status }: { status?: 'pending' | 'approved' | 'rejected' } = {}) {
+    if (status) {
+      return db.query.refundRequests.findMany({ where: eq(refundRequests.status as any, status) as any, orderBy: [desc(refundRequests.createdAt)] });
+    }
+    return db.query.refundRequests.findMany({ orderBy: [desc(refundRequests.createdAt)] });
+  },
+
+  async approveRefundRequest(id: string, approverId: string) {
+    const reqRow = await db.query.refundRequests.findFirst({ where: eq(refundRequests.id, id) });
+    if (!reqRow) return null;
+    // Mark request approved
+    const updatedReq = (await db.update(refundRequests)
+      .set({ status: 'approved', approvedBy: approverId, updatedAt: sql`(CURRENT_TIMESTAMP)` })
+      .where(eq(refundRequests.id, id))
+      .returning())[0];
+    // Update booking
+    await db.update(bookings)
+      .set({ refundStatus: 'approved', refundAmount: (reqRow as any).amount, refundReason: (reqRow as any).reason, refundedAt: new Date().toISOString(), refundApprovedBy: approverId, updatedAt: sql`(CURRENT_TIMESTAMP)` })
+      .where(eq(bookings.id, (reqRow as any).bookingId));
+    return updatedReq;
+  },
+
+  async rejectRefundRequest(id: string, approverId: string) {
+    const reqRow = await db.query.refundRequests.findFirst({ where: eq(refundRequests.id, id) });
+    if (!reqRow) return null;
+    const updatedReq = (await db.update(refundRequests)
+      .set({ status: 'rejected', approvedBy: approverId, updatedAt: sql`(CURRENT_TIMESTAMP)` })
+      .where(eq(refundRequests.id, id))
+      .returning())[0];
+    // Reset booking refund fields except reason (keep)
+    await db.update(bookings)
+      .set({ refundStatus: 'rejected', refundAmount: 0, refundedAt: null as any, refundApprovedBy: approverId, updatedAt: sql`(CURRENT_TIMESTAMP)` })
+      .where(eq(bookings.id, (reqRow as any).bookingId));
+    return updatedReq;
+  },
+
   async getBookingsByPhoneNumber(phoneNumber: string) {
+    // Support partial matches by using LIKE and also try exact match prioritization
+    const pattern = `%${phoneNumber}%`;
     return db.query.bookings.findMany({
-      where: eq(bookings.phoneNumber, phoneNumber),
+      where: like(bookings.phoneNumber, pattern),
       orderBy: (bookings, { desc }) => [desc(bookings.createdAt)],
     });
   },
@@ -132,6 +181,146 @@ export const storage = {
       .where(eq(bookings.id, bookingId))
       .returning();
     return result[0];
+  },
+
+  // Daily Income operations
+  async listDailyIncome(filters?: { startDate?: string; endDate?: string; paymentType?: 'all' | 'cash' | 'upi' | 'other' }) {
+    const whereParts: any[] = [];
+    if (filters?.startDate) whereParts.push(gte(dailyIncome.date as any, filters.startDate));
+    if (filters?.endDate) whereParts.push(lte(dailyIncome.date as any, filters.endDate));
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+    const rows = await db.query.dailyIncome.findMany({ where: whereClause, orderBy: [desc(dailyIncome.date as any)] });
+
+    if (!rows.length) return rows;
+
+    // Build a set of dates we need refund adjustments for
+    const dates = Array.from(new Set(rows.map(r => r.date)));
+    const bookingsForDates = await db.query.bookings.findMany({
+      where: inArray(bookings.bookingDate as any, dates as any),
+    });
+
+    // Build per-date refund breakdowns (pro-rate cash vs UPI) and refunded show counts
+    const refundBreakdown = new Map<string, { total: number; cash: number; upi: number; refundedShows: number }>();
+    for (const b of bookingsForDates as any[]) {
+      const date = b.bookingDate as string;
+      const isApprovedRefund = b.refundStatus === 'approved';
+      const refundAmt = isApprovedRefund ? Math.max(0, Number(b.refundAmount || 0)) : 0;
+      if (refundAmt <= 0) continue;
+      const paidCash = Number(b.cashAmount || 0);
+      const paidUpi = Number(b.upiAmount || 0);
+      const paidTotal = paidCash + paidUpi;
+      const totalAmount = Number(b.totalAmount || paidTotal || 0);
+      // Pro-rate refund across payment modes; if nothing paid, assign to cash by default 0
+      const cashShare = paidTotal > 0 ? (refundAmt * (paidCash / paidTotal)) : 0;
+      const upiShare = Math.max(0, refundAmt - cashShare);
+      const fullRefunded = totalAmount > 0 ? (refundAmt >= totalAmount - 0.01) : (refundAmt >= paidTotal - 0.01);
+      const curr = refundBreakdown.get(date) || { total: 0, cash: 0, upi: 0, refundedShows: 0 };
+      curr.total += refundAmt;
+      curr.cash += cashShare;
+      curr.upi += upiShare;
+      if (fullRefunded) curr.refundedShows += 1;
+      refundBreakdown.set(date, curr);
+    }
+
+    // Enrich rows with computed refunds and adjusted totals (do not persist here)
+    const enriched = rows.map(r => {
+      const cash = Number(r.cashReceived || 0);
+      const upi = Number(r.upiReceived || 0);
+      const other = Number(r.otherPayments || 0);
+      const breakdown = refundBreakdown.get(r.date) || { total: 0, cash: 0, upi: 0, refundedShows: 0 };
+      const adjustedCashReceived = Math.max(0, cash - breakdown.cash);
+      const adjustedUpiReceived = Math.max(0, upi - breakdown.upi);
+      const adjustedShows = Math.max(0, Number(r.numberOfShows || 0) - breakdown.refundedShows);
+      const adjustedRevenue = Math.max(0, adjustedCashReceived + adjustedUpiReceived + other);
+      return {
+        ...r,
+        refundTotal: breakdown.total,
+        adjustedRevenue,
+        adjustedShows,
+        adjustedCashReceived,
+        adjustedUpiReceived,
+      } as any;
+    });
+
+    return enriched;
+  },
+
+  async createDailyIncome(data: any) {
+    const res = await db.insert(dailyIncome).values(data).returning();
+    return res[0];
+  },
+
+  async updateDailyIncome(id: string, data: any) {
+    const res = await db.update(dailyIncome).set(data).where(eq(dailyIncome.id, id)).returning();
+    return res[0];
+  },
+
+  async deleteDailyIncome(id: string) {
+    await db.delete(dailyIncome).where(eq(dailyIncome.id, id));
+    return true;
+  },
+
+  async getDailyIncomeByDate(date: string) {
+    return db.query.dailyIncome.findFirst({ where: eq(dailyIncome.date as any, date) });
+  },
+
+  async syncDailyIncomeFromBookings(opts?: { startDate?: string; endDate?: string; mode?: 'overwrite' | 'upsert-missing' }) {
+    // Fetch bookings in range or all
+    const whereParts: any[] = [];
+    if (opts?.startDate) whereParts.push(gte(bookings.bookingDate as any, opts.startDate));
+    if (opts?.endDate) whereParts.push(lte(bookings.bookingDate as any, opts.endDate));
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+
+    const all = await db.query.bookings.findMany({ where: whereClause });
+    if (!all.length) return { updated: 0 };
+
+    // Group by date and aggregate
+    const byDate = new Map<string, { cash: number; upi: number; shows: number; refund: number }>();
+    for (const b of all as any[]) {
+      const d = b.bookingDate as string;
+      const curr = byDate.get(d) || { cash: 0, upi: 0, shows: 0, refund: 0 };
+      curr.cash += Number(b.cashAmount || 0);
+      curr.upi += Number(b.upiAmount || 0);
+      curr.shows += 1; // treat each booking as a show entry; adjust if you have separate show entity
+      if (b.refundStatus === 'approved') curr.refund += Math.max(0, Number(b.refundAmount || 0));
+      byDate.set(d, curr);
+    }
+
+    let updated = 0;
+    for (const [date, agg] of byDate) {
+      const gross = agg.cash + agg.upi; // otherPayments left as 0 for sync; can be extended
+      const adjustedRevenue = Math.max(0, gross - agg.refund);
+      const existing = await this.getDailyIncomeByDate(date);
+      if (existing) {
+        if ((opts?.mode || 'overwrite') === 'overwrite') {
+          await this.updateDailyIncome(existing.id, {
+            date,
+            numberOfShows: agg.shows,
+            cashReceived: agg.cash,
+            upiReceived: agg.upi,
+            otherPayments: existing.otherPayments || 0,
+            adjustedShows: agg.shows,
+            adjustedRevenue,
+            refundTotal: agg.refund,
+          });
+          updated++;
+        }
+      } else {
+        await this.createDailyIncome({
+          date,
+          numberOfShows: agg.shows,
+          cashReceived: agg.cash,
+          upiReceived: agg.upi,
+          otherPayments: 0,
+          adjustedShows: agg.shows,
+          adjustedRevenue,
+          refundTotal: agg.refund,
+        });
+        updated++;
+      }
+    }
+
+    return { updated };
   },
 
   async deleteBooking(bookingId: string) {
@@ -951,63 +1140,99 @@ export const storage = {
   
   // Analytics operations
   async getDailyRevenue(days: number = 7) {
+    // Helper to compute net amounts after approved refunds
+    const computeNet = (b: any) => {
+      const total = Number(b.totalAmount || 0);
+      const cash = Number(b.cashAmount || 0);
+      const upi = Number(b.upiAmount || 0);
+      const isRefunded = (b.refundStatus === 'approved');
+      const refund = isRefunded ? Math.max(0, Math.min(Number(b.refundAmount || 0), total)) : 0;
+      // Proportionally split refund across payment methods based on original split
+      let netTotal = Math.max(0, total - refund);
+      if (total > 0 && refund > 0) {
+        const cashShare = cash / total;
+        const upiShare = upi / total;
+        // We only need netTotal for this function
+        return { netTotal };
+      }
+      return { netTotal };
+    };
+
     // Get today's date
     const today = new Date();
-    const result = [];
-    
-    // Generate data for each day
+    const result = [] as any[];
+
     for (let i = 0; i < days; i++) {
       const date = new Date(today);
       date.setDate(today.getDate() - i);
       const dateString = date.toISOString().split('T')[0];
-      
+
       // Query bookings for this date
       const dailyBookings = await db.query.bookings.findMany({
         where: eq(bookings.bookingDate, dateString)
       });
-      
-      // Calculate revenue and booking count
-      const revenue = dailyBookings.reduce((sum, booking) => sum + Number(booking.totalAmount), 0);
-      
+
+      // Calculate net revenue and booking count
+      const revenue = dailyBookings.reduce((sum, b) => sum + computeNet(b).netTotal, 0);
+
       result.push({
         date: dateString,
         revenue,
         bookings: dailyBookings.length
       });
     }
-    
+
     return result;
   },
-  
+
   async getPaymentMethodBreakdown() {
-    // Get all bookings
+    // Helper to compute net cash/upi after approved refunds proportionally
+    const computeNetSplit = (b: any) => {
+      const total = Number(b.totalAmount || 0);
+      const cash = Number(b.cashAmount || 0);
+      const upi = Number(b.upiAmount || 0);
+      const isRefunded = (b.refundStatus === 'approved');
+      const refund = isRefunded ? Math.max(0, Math.min(Number(b.refundAmount || 0), total)) : 0;
+      if (total <= 0 || refund <= 0) return { netCash: cash, netUpi: upi };
+      const cashShare = cash / total;
+      const upiShare = upi / total;
+      const netCash = Math.max(0, cash - refund * cashShare);
+      const netUpi = Math.max(0, upi - refund * upiShare);
+      return { netCash, netUpi };
+    };
+
     const allBookings = await db.query.bookings.findMany();
-    
-    // Calculate totals
-    const cash = allBookings.reduce((sum, booking) => sum + Number(booking.cashAmount), 0);
-    const upi = allBookings.reduce((sum, booking) => sum + Number(booking.upiAmount), 0);
-    
+    let cash = 0;
+    let upi = 0;
+    for (const b of allBookings as any[]) {
+      const { netCash, netUpi } = computeNetSplit(b);
+      cash += netCash;
+      upi += netUpi;
+    }
     return { cash, upi };
   },
-  
+
   async getTimeSlotPerformance() {
-    // Get all bookings
+    const computeNet = (b: any) => {
+      const total = Number(b.totalAmount || 0);
+      const isRefunded = (b.refundStatus === 'approved');
+      const refund = isRefunded ? Math.max(0, Math.min(Number(b.refundAmount || 0), total)) : 0;
+      return Math.max(0, total - refund);
+    };
+
     const allBookings = await db.query.bookings.findMany();
-    
-    // Group by time slot
-    const slotMap = new Map();
-    
-    allBookings.forEach(booking => {
-      const slot = booking.timeSlot;
+
+    const slotMap = new Map<string, { timeSlot: string; bookings: number; revenue: number }>();
+    for (const booking of allBookings as any[]) {
+      const slot = booking.timeSlot as string;
       if (!slotMap.has(slot)) {
         slotMap.set(slot, { timeSlot: slot, bookings: 0, revenue: 0 });
       }
-      
-      const slotData = slotMap.get(slot);
+      const slotData = slotMap.get(slot)!;
       slotData.bookings += 1;
-      slotData.revenue += Number(booking.totalAmount);
-    });
-    
+      slotData.revenue += computeNet(booking);
+    }
+
     return Array.from(slotMap.values());
   },
   

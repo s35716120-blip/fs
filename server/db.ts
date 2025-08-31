@@ -23,6 +23,20 @@ export function initializeDatabase() {
     }
   } catch {}
 
+  // Ensure bookings has refund columns (for existing DBs)
+  try {
+    const bInfo = sqlite.prepare(`PRAGMA table_info(bookings)`).all() as any[];
+    const addIfMissing = (col: string, ddl: string) => {
+      if (!bInfo.some(c => c.name === col)) sqlite.exec(`ALTER TABLE bookings ADD COLUMN ${ddl}`);
+    };
+    addIfMissing('refund_status', 'refund_status TEXT DEFAULT \"none\"');
+    addIfMissing('refund_amount', 'refund_amount REAL NOT NULL DEFAULT 0');
+    addIfMissing('refund_reason', 'refund_reason TEXT');
+    addIfMissing('refunded_at', 'refunded_at TEXT');
+    addIfMissing('refund_requested_by', 'refund_requested_by TEXT');
+    addIfMissing('refund_approved_by', 'refund_approved_by TEXT');
+  } catch {}
+
   // Ensure feedbacks has denormalized customer columns (for existing DBs)
   try {
     const fInfo = sqlite.prepare(`PRAGMA table_info(feedbacks)`).all() as any[];
@@ -69,7 +83,16 @@ export function initializeDatabase() {
       created_by TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (created_by) REFERENCES users(id)
+      -- Refund fields
+      refund_status TEXT DEFAULT 'none',
+      refund_amount REAL NOT NULL DEFAULT 0,
+      refund_reason TEXT,
+      refunded_at TEXT,
+      refund_requested_by TEXT,
+      refund_approved_by TEXT,
+      FOREIGN KEY (created_by) REFERENCES users(id),
+      FOREIGN KEY (refund_requested_by) REFERENCES users(id),
+      FOREIGN KEY (refund_approved_by) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS expenses (
@@ -79,6 +102,8 @@ export function initializeDatabase() {
       category TEXT NOT NULL,
       expense_date TEXT NOT NULL,
       creator_name TEXT,
+      paid_cash REAL,
+      paid_upi REAL,
       created_by TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -203,6 +228,22 @@ export function initializeDatabase() {
       FOREIGN KEY (created_by) REFERENCES users(id)
     );
 
+    -- Refund requests table
+    CREATE TABLE IF NOT EXISTS refund_requests (
+      id TEXT PRIMARY KEY,
+      booking_id TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      reason TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      requested_by TEXT NOT NULL,
+      approved_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (booking_id) REFERENCES bookings(id),
+      FOREIGN KEY (requested_by) REFERENCES users(id),
+      FOREIGN KEY (approved_by) REFERENCES users(id)
+    );
+
          CREATE TABLE IF NOT EXISTS activity_logs (
        id TEXT PRIMARY KEY,
        user_id TEXT NOT NULL,
@@ -311,6 +352,17 @@ export function initializeDatabase() {
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
   `);
+
+  // Ensure daily_income has adjusted columns (for existing DBs)
+  try {
+    const dInfo = sqlite.prepare(`PRAGMA table_info(daily_income)`).all() as any[];
+    const addIfMissing = (col: string, ddl: string) => {
+      if (!dInfo.some(c => c.name === col)) sqlite.exec(`ALTER TABLE daily_income ADD COLUMN ${ddl}`);
+    };
+    addIfMissing('adjusted_shows', 'adjusted_shows INTEGER');
+    addIfMissing('adjusted_revenue', 'adjusted_revenue REAL');
+    addIfMissing('refund_total', 'refund_total REAL');
+  } catch {}
 
   // Ensure customer_tickets has required columns (for existing DBs)
   try {

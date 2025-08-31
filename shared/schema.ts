@@ -69,6 +69,13 @@ export const bookings = sqliteTable("bookings", {
   createdBy: text("created_by").references(() => users.id),
   createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
   updatedAt: text("updated_at").default(sql`(CURRENT_TIMESTAMP)`),
+  // Refund fields
+  refundStatus: text("refund_status").default('none'), // none | pending | approved | rejected
+  refundAmount: real("refund_amount").notNull().default(0),
+  refundReason: text("refund_reason"),
+  refundedAt: text("refunded_at"),
+  refundRequestedBy: text("refund_requested_by").references(() => users.id),
+  refundApprovedBy: text("refund_approved_by").references(() => users.id),
 });
 
 // Expenses
@@ -265,6 +272,10 @@ export const dailyIncome = sqliteTable("daily_income", {
   upiReceived: real("upi_received").notNull().default(0),
   otherPayments: real("other_payments").notNull().default(0),
   notes: text("notes"),
+  // Aggregates that consider refunds (optional computed/denormalized fields)
+  adjustedShows: integer("adjusted_shows"),
+  adjustedRevenue: real("adjusted_revenue"),
+  refundTotal: real("refund_total"),
   createdBy: text("created_by").references(() => users.id),
   createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
   updatedAt: text("updated_at").default(sql`(CURRENT_TIMESTAMP)`),
@@ -350,6 +361,23 @@ export const loginTracker = sqliteTable("login_tracker", {
   createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
 });
 
+// Refund Requests
+export const refundRequests = sqliteTable("refund_requests", {
+  id: text("id").primaryKey().default(
+    sql`(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
+         substr(hex(randomblob(2)),2) || '-' ||
+         substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)) )`
+  ),
+  bookingId: text("booking_id").references(() => bookings.id).notNull(),
+  amount: real("amount").notNull().default(0),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default('pending'), // pending | approved | rejected
+  requestedBy: text("requested_by").references(() => users.id).notNull(),
+  approvedBy: text("approved_by").references(() => users.id),
+  createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
+  updatedAt: text("updated_at").default(sql`(CURRENT_TIMESTAMP)`),
+});
+
 /* ---------------- SCHEMAS ---------------- */
 
 export const insertBookingSchema = createInsertSchema(bookings).omit({
@@ -358,6 +386,13 @@ export const insertBookingSchema = createInsertSchema(bookings).omit({
   createdAt: true,
   updatedAt: true,
   repeatCount: true,
+  // Refund fields are server-managed
+  refundStatus: true,
+  refundAmount: true,
+  refundReason: true,
+  refundedAt: true,
+  refundRequestedBy: true,
+  refundApprovedBy: true,
 }).extend({
   guests: z.coerce.number().min(1),
   customerName: z.string().min(1, "Customer name is required"),
@@ -384,6 +419,8 @@ export const insertExpenseSchema = createInsertSchema(expenses).omit({
 }).extend({
   amount: z.coerce.number().min(0),
   creatorName: z.string().optional(),
+  paidCash: z.coerce.number().optional(),
+  paidUpi: z.coerce.number().optional(),
 });
 
 // Ad Spend insert schema
@@ -459,6 +496,9 @@ export const insertDailyIncomeSchema = createInsertSchema(dailyIncome).omit({
   createdBy: true,
   createdAt: true,
   updatedAt: true,
+  adjustedShows: true,
+  adjustedRevenue: true,
+  refundTotal: true,
 }).extend({
   date: z.string().min(1), // YYYY-MM-DD
   numberOfShows: z.coerce.number().min(1),
@@ -505,3 +545,4 @@ export type InsertDailyIncome = z.infer<typeof insertDailyIncomeSchema>;
 export type DailyIncome = typeof dailyIncome.$inferSelect;
 export type InsertCustomerTicket = z.infer<typeof insertCustomerTicketSchema>;
 export type CustomerTicket = typeof customerTickets.$inferSelect;
+export type RefundRequest = typeof refundRequests.$inferSelect;

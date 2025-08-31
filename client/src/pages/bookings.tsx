@@ -174,8 +174,43 @@ export default function Bookings() {
     return new Date(dateString).toLocaleDateString('en-IN');
   };
 
-  const getPaymentStatus = (totalAmount: number) => {
-    return totalAmount <= 750 ? 'partial' : 'full';
+  // Compute booking status considering refunds and payments
+  const getBookingStatus = (booking: any) => {
+    const total = Number(booking.totalAmount || 0);
+    const paid = Number(booking.cashAmount || 0) + Number(booking.upiAmount || 0);
+    const refundStatus = booking.refundStatus as string | undefined;
+    const refundAmount = Number(booking.refundAmount || 0);
+
+    if (refundStatus === 'approved' && refundAmount > 0) {
+      if (refundAmount >= total - 0.01) return 'full_refund';
+      return 'partial_refund';
+    }
+    if (refundStatus === 'pending') return 'refund_pending';
+
+    if (paid >= total - 0.01) return 'full_payment';
+    return 'partial_payment';
+  };
+
+  const getBookingStatusLabel = (status: string) => {
+    switch (status) {
+      case 'full_refund': return 'Full Refund';
+      case 'partial_refund': return 'Partial Refund';
+      case 'refund_pending': return 'Refund Pending';
+      case 'full_payment': return 'Full Payment';
+      case 'partial_payment': return 'Partial Payment';
+      default: return '—';
+    }
+  };
+
+  const getBookingStatusClass = (status: string) => {
+    switch (status) {
+      case 'full_refund': return 'bg-red-600/20 text-red-400 border-red-600/30';
+      case 'partial_refund': return 'bg-yellow-600/20 text-yellow-400 border-yellow-600/30';
+      case 'refund_pending': return 'bg-orange-600/20 text-orange-400 border-orange-600/30';
+      case 'full_payment': return 'bg-green-600/20 text-green-400 border-green-600/30';
+      case 'partial_payment': return 'bg-yellow-600/20 text-yellow-400 border-yellow-600/30';
+      default: return 'bg-gray-600/20 text-gray-300 border-gray-600/30';
+    }
   };
 
   const handleEditBooking = (booking: any) => {
@@ -226,6 +261,11 @@ export default function Bookings() {
             .yes { background-color: #dcfce7; color: #166534; }
             .no { background-color: #fecaca; color: #991b1b; }
             .partial { background-color: #fef3c7; color: #92400e; }
+            .payment-full { background-color: #dcfce7; color: #166534; }
+            .payment-partial { background-color: #fef3c7; color: #92400e; }
+            .refund-full { background-color: #fecaca; color: #991b1b; }
+            .refund-partial { background-color: #fde68a; color: #92400e; }
+            .refund-pending { background-color: #ffedd5; color: #9a3412; }
             .footer { margin-top: 30px; text-align: center; color: #666; font-size: 12px; }
           </style>
         </head>
@@ -258,7 +298,25 @@ export default function Bookings() {
               </tr>
             </thead>
             <tbody>
-              ${bookingsToPrint.map((booking: any) => `
+              ${bookingsToPrint.map((booking: any) => {
+                const total = Number(booking.totalAmount || 0);
+                const paid = Number(booking.cashAmount || 0) + Number(booking.upiAmount || 0);
+                const refundStatus = booking.refundStatus as string | undefined;
+                const refundAmount = Number(booking.refundAmount || 0);
+                let status = 'Partial Payment';
+                if (refundStatus === 'approved' && refundAmount > 0) {
+                  status = refundAmount >= total - 0.01 ? 'Full Refund' : 'Partial Refund';
+                } else if (refundStatus === 'pending') {
+                  status = 'Refund Pending';
+                } else if (paid >= total - 0.01) {
+                  status = 'Full Payment';
+                }
+                const statusClass = status === 'Full Refund' ? 'refund-full'
+                  : status === 'Partial Refund' ? 'refund-partial'
+                  : status === 'Refund Pending' ? 'refund-pending'
+                  : status === 'Full Payment' ? 'payment-full'
+                  : 'payment-partial';
+                return `
                 <tr>
                   <td>${formatDate(booking.bookingDate)}</td>
                   <td>${booking.customerName || 'N/A'}</td>
@@ -276,9 +334,9 @@ export default function Bookings() {
                   <td>${formatCurrency(Number(booking.snacksCash || 0))}</td>
                   <td>${formatCurrency(Number(booking.snacksUpi || 0))}</td>
                   <td>${booking.createdByName || booking.createdByEmail || booking.createdBy || 'N/A'}</td>
-                  <td><span class="status ${getPaymentStatus(Number(booking.totalAmount)) === 'full' ? 'yes' : 'partial'}">${getPaymentStatus(Number(booking.totalAmount)) === 'full' ? 'Full Payment' : 'Partial Payment'}</span></td>
-                </tr>
-              `).join('')}
+                  <td><span class="status ${statusClass}">${status}</span></td>
+                </tr>`
+              }).join('')}
             </tbody>
           </table>
           <div class="footer">
@@ -505,7 +563,7 @@ export default function Bookings() {
                     </thead>
                     <tbody className="text-white">
                       {currentBookings.map((booking: any) => {
-                        const paymentStatus = getPaymentStatus(Number(booking.totalAmount));
+                        const status = getBookingStatus(booking);
                         return (
                         <tr key={booking.id} className="border-b border-gray-700 hover:bg-gray-800/30 transition-colors" data-testid={`row-booking-${booking.id}`}>
                           <td className="py-4">
@@ -562,11 +620,8 @@ export default function Bookings() {
                             {booking.createdByName || booking.createdByEmail || booking.createdBy || 'N/A'}
                           </td>
                           <td className="py-4">
-                            <Badge className={paymentStatus === 'full'
-                              ? 'bg-green-600/20 text-green-400 border-green-600/30'
-                              : 'bg-yellow-600/20 text-yellow-400 border-yellow-600/30'
-                            }>
-                              {paymentStatus === 'full' ? 'Full Payment' : 'Partial Payment'}
+                            <Badge className={getBookingStatusClass(status)}>
+                              {getBookingStatusLabel(status)}
                             </Badge>
                           </td>
                           <td className="py-4">

@@ -405,7 +405,7 @@ export function BookingModal({ isOpen, onClose, onSuccess }: BookingModalProps) 
                     <div className="space-y-0.5">
                       <FormLabel className="text-base text-gray-300">18+ Content</FormLabel>
                       <div className="text-sm text-gray-400">
-                        Is this booking for 18+ content?
+                        Is the customer 18+?
                       </div>
                     </div>
                     <FormControl>
