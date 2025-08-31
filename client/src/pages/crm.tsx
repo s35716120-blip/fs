@@ -54,6 +54,8 @@ export default function CRM() {
   const { toast } = useToast();
   const { isAuthenticated, isLoading, user } = useAuth();
   const [phoneNumber, setPhoneNumber] = useState("");
+  const [searchDate, setSearchDate] = useState(""); // optional booking date filter (YYYY-MM-DD)
+  const [searchSlot, setSearchSlot] = useState(""); // optional time slot filter
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [customerHistory, setCustomerHistory] = useState<any[]>([]);
@@ -117,23 +119,35 @@ export default function CRM() {
 
     try {
       let booking = null;
-      let allBookings = [];
+      let allBookings: any[] = [];
       
-      const response = await fetch(`/api/bookings/search?phone=${phoneNumber}`);
+      // 1) Fetch by phone
+      const response = await fetch(`/api/bookings/search?phone=${encodeURIComponent(phoneNumber)}`);
       if (response.ok) {
         const bookings = await response.json();
-        if (bookings.length > 0) {
-          booking = bookings[0];
-          allBookings = bookings;
-        }
+        allBookings = bookings || [];
+      }
+
+      // 2) If date or slot provided, filter in-memory (optional filters)
+      const norm = (s: string) => (s || '').trim().replace(/\s+/g, '').toLowerCase();
+      const filtered = allBookings.filter(b => {
+        const dateOk = !searchDate || b.bookingDate === searchDate;
+        const slotOk = !searchSlot || norm(b.timeSlot) === norm(searchSlot);
+        return dateOk && slotOk;
+      });
+
+      // 3) Pick the most recent match if any filters applied, else first
+      const list = (searchDate || searchSlot) ? filtered : allBookings;
+      if (list.length > 0) {
+        booking = list[0];
       }
 
       if (booking) {
         setSelectedBooking(booking);
-        setCustomerHistory(allBookings);
+        setCustomerHistory(list);
         
         // Calculate customer statistics
-        const stats = calculateCustomerStats(allBookings);
+        const stats = calculateCustomerStats(list);
         setCustomerStats(stats);
         
         // Load customer notes
@@ -163,7 +177,7 @@ export default function CRM() {
       } else {
         toast({
           title: "Customer Not Found",
-          description: "No bookings found for this phone number",
+          description: "No bookings found for this search criteria",
           variant: "destructive"
         });
         setSelectedBooking(null);
@@ -511,7 +525,7 @@ export default function CRM() {
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Search Input */}
-            <div className="flex space-x-4">
+            <div className="flex flex-col md:flex-row md:items-end md:space-x-4 space-y-3 md:space-y-0">
               <div className="flex-1">
                 <Label htmlFor="phoneNumber" className="text-gray-300">Phone Number</Label>
                 <Input
@@ -523,11 +537,31 @@ export default function CRM() {
                   onKeyPress={(e) => e.key === 'Enter' && searchBooking()}
                 />
               </div>
-              <Button onClick={searchBooking} className="bg-rosae-red hover:bg-rosae-dark-red self-end">
+              <div>
+                <Label htmlFor="searchDate" className="text-gray-300">Date (optional)</Label>
+                <Input
+                  id="searchDate"
+                  type="date"
+                  value={searchDate}
+                  onChange={(e) => setSearchDate(e.target.value)}
+                  className="bg-gray-800 border-gray-600 text-white"
+                />
+              </div>
+              <div>
+                <Label htmlFor="searchSlot" className="text-gray-300">Time Slot (optional)</Label>
+                <Input
+                  id="searchSlot"
+                  value={searchSlot}
+                  onChange={(e) => setSearchSlot(e.target.value)}
+                  placeholder="e.g. 7:00 PM"
+                  className="bg-gray-800 border-gray-600 text-white"
+                />
+              </div>
+              <Button onClick={searchBooking} className="bg-rosae-red hover:bg-rosae-dark-red">
                 <Search className="w-4 h-4 mr-2" />
-                Search Customer
+                Search
               </Button>
-              <Button onClick={() => setPhoneNumber("")} variant="outline" className="border-gray-600 text-gray-300 self-end">
+              <Button onClick={() => { setPhoneNumber(""); setSearchDate(""); setSearchSlot(""); }} variant="outline" className="border-gray-600 text-gray-300">
                 <RefreshCw className="w-4 h-4 mr-2" />
                 Clear
               </Button>
