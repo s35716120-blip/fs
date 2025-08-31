@@ -1274,6 +1274,169 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Feedback routes
+  app.get("/api/feedbacks", isAuthenticated, async (req, res) => {
+    try {
+      const { collected, theatreName, date, timeSlot, page = '1', pageSize = '20' } = req.query as any;
+      const result = await storage.listFeedbacks({
+        collected: typeof collected === 'string' ? collected === 'true' : undefined,
+        theatreName: theatreName || undefined,
+        date: date || undefined,
+        timeSlot: timeSlot || undefined,
+      }, parseInt(page, 10), parseInt(pageSize, 10));
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching feedbacks:", error);
+      res.status(500).json({ message: "Failed to fetch feedbacks" });
+    }
+  });
+
+  app.get("/api/feedbacks/pending", isAuthenticated, async (req, res) => {
+    try {
+      const { theatreName, date, timeSlot, page = '1', pageSize = '20' } = req.query as any;
+      const result = await storage.listBookingsNeedingFeedback({ theatreName, date, timeSlot }, parseInt(page, 10), parseInt(pageSize, 10));
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching bookings needing feedback:", error);
+      res.status(500).json({ message: "Failed to fetch pending feedbacks" });
+    }
+  });
+
+  app.post("/api/feedbacks", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { bookingId, collected, reason } = req.body;
+      if (!bookingId || typeof collected !== 'boolean') return res.status(400).json({ message: 'bookingId and collected are required' });
+
+      // Load booking to denormalize
+      const booking = await storage.getBookingById(bookingId);
+      const fb = await storage.upsertFeedback({
+        bookingId,
+        bookingDate: booking?.bookingDate || null,
+        timeSlot: booking?.timeSlot || null,
+        theatreName: booking?.theatreName || null,
+        // New: denormalize customer info
+        customerName: booking?.customerName || null,
+        phoneNumber: booking?.phoneNumber || null,
+        collected,
+        reason: collected ? null : (reason || null),
+        createdBy: userId,
+      });
+
+      if (!collected) {
+        // Auto-create follow-up when set to No
+        await storage.createFollowUpForFeedback({
+          bookingId,
+          customerName: booking?.customerName || null,
+          phoneNumber: booking?.phoneNumber || null,
+          reason: reason || 'Feedback not collected',
+          createdBy: userId
+        });
+      } else {
+        // If flipping to Yes, close all pending follow-ups for this booking
+        try { await storage.closePendingFollowUpsForBooking(bookingId); } catch {}
+      }
+
+      res.json(fb);
+    } catch (error) {
+      console.error("Error upserting feedback:", error);
+      res.status(500).json({ message: "Failed to save feedback" });
+    }
+  });
+
+  // Force-mark latest feedback collected for a booking and return updated row
+  app.post("/api/feedbacks/mark-collected", isAuthenticated, async (req: any, res) => {
+    try {
+      const { bookingId } = req.body || {};
+      if (!bookingId) return res.status(400).json({ message: 'bookingId is required' });
+
+      const latest = await storage.getLatestFeedbackForBooking(bookingId);
+      if (latest) {
+        const updated = await storage.upsertFeedback({ id: latest.id, bookingId, collected: true, reason: null });
+        // Also close pending follow-ups for this booking
+        try { await storage.closePendingFollowUpsForBooking(bookingId); } catch {}
+        return res.json(updated);
+      }
+
+      // If no feedback exists yet, create a collected one using booking denorm
+      const booking = await storage.getBookingById(bookingId);
+      const created = await storage.upsertFeedback({
+        bookingId,
+        bookingDate: booking?.bookingDate || null,
+        timeSlot: booking?.timeSlot || null,
+        theatreName: booking?.theatreName || null,
+        customerName: booking?.customerName || null,
+        phoneNumber: booking?.phoneNumber || null,
+        collected: true,
+        reason: null,
+      });
+      try { await storage.closePendingFollowUpsForBooking(bookingId); } catch {}
+      res.json(created);
+    } catch (error) {
+      console.error("Error marking feedback collected:", error);
+      res.status(500).json({ message: "Failed to mark collected" });
+    }
+  });
+
+  app.get("/api/feedbacks/export", isAuthenticated, async (req, res) => {
+    try {
+      const { collected, theatreName, date, timeSlot } = req.query as any;
+      const csv = await storage.exportFeedbacksCSV({
+        collected: typeof collected === 'string' ? collected === 'true' : undefined,
+        theatreName: theatreName || undefined,
+        date: date || undefined,
+        timeSlot: timeSlot || undefined,
+      });
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", 'attachment; filename="feedbacks.csv"');
+      res.send(csv);
+    } catch (error) {
+      console.error("Error exporting feedbacks:", error);
+      res.status(500).json({ message: "Failed to export feedbacks" });
+    }
+  });
+
+  // Follow-ups routes (for feedback follow-ups)
+  app.get("/api/follow-ups", isAuthenticated, async (req, res) => {
+    try {
+      const { type, status } = req.query as any;
+      const rows = await storage.listFollowUps({
+        type: type || undefined,
+        status: status || undefined,
+      });
+      res.json({ rows });
+    } catch (error) {
+      console.error("Error fetching follow-ups:", error);
+      res.status(500).json({ message: "Failed to fetch follow-ups" });
+    }
+  });
+
+  app.patch("/api/follow-ups/:id", isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params as any;
+      const { status } = req.body as any;
+      if (status === 'completed') {
+        const updated = await storage.markFollowUpCompleted(id);
+        let latestFeedback = null as any;
+        try {
+          if ((updated as any)?.bookingId) {
+            latestFeedback = await storage.getLatestFeedbackForBooking((updated as any).bookingId);
+          }
+        } catch {}
+        // Return the updated follow-up and the latest feedback state for immediate UI sync
+        return res.json({ ...updated, latestFeedback });
+      }
+      if (status === 'cancelled') {
+        const updated = await storage.cancelFollowUp(id);
+        return res.json(updated);
+      }
+      return res.status(400).json({ message: 'Unsupported status update' });
+    } catch (error) {
+      console.error("Error updating follow-up:", error);
+      res.status(500).json({ message: "Failed to update follow-up" });
+    }
+  });
+
   // Analytics routes
   app.get("/api/analytics/daily-revenue", isAuthenticated, async (req, res) => {
     try {

@@ -284,6 +284,45 @@ export const customerTickets = sqliteTable("customer_tickets", {
   deletedAt: text("deleted_at"),
 });
 
+// Feedbacks
+export const feedbacks = sqliteTable("feedbacks", {
+  id: text("id").primaryKey().default(
+    sql`(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))`
+  ),
+  bookingId: text("booking_id").references(() => bookings.id).notNull(),
+  // Denormalized helpers for filtering without heavy joins
+  bookingDate: text("booking_date"),
+  timeSlot: text("time_slot"),
+  theatreName: text("theatre_name"),
+  // Denormalized customer info to ensure display even if booking is missing
+  customerName: text("customer_name"),
+  phoneNumber: text("phone_number"),
+  collected: integer("collected", { mode: "boolean" }).notNull().default(true),
+  reason: text("reason"),
+  createdBy: text("created_by").references(() => users.id),
+  createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
+  updatedAt: text("updated_at").default(sql`(CURRENT_TIMESTAMP)`),
+});
+
+// Follow Ups
+export const followUps = sqliteTable("follow_ups", {
+  id: text("id").primaryKey().default(
+    sql`(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))`
+  ),
+  bookingId: text("booking_id").references(() => bookings.id),
+  customerName: text("customer_name"),
+  phoneNumber: text("phone_number"),
+  reason: text("reason"),
+  type: text("type").default('feedback'),
+  status: text("status").default('pending'),
+  dueAt: text("due_at"),
+  completedAt: text("completed_at"),
+  notifiedOverdueAt: text("notified_overdue_at"),
+  createdBy: text("created_by").references(() => users.id),
+  createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
+  updatedAt: text("updated_at").default(sql`(CURRENT_TIMESTAMP)`),
+});
+
 // Configurations
 export const configurations = sqliteTable("configurations", {
   key: text("key").primaryKey(),

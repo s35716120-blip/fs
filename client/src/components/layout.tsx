@@ -2,9 +2,10 @@ import { Sidebar } from "@/components/sidebar";
 import { SidebarProvider, useSidebar } from "@/contexts/SidebarContext";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Menu, Clock, User } from "lucide-react";
+import { Menu, Clock, User, Bell } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -22,6 +23,8 @@ function LayoutContent({ children }: LayoutProps) {
   const { isOpen, toggle } = useSidebar();
   const { user, isAuthenticated } = useAuth();
   const [now, setNow] = useState(Date.now());
+  const { data: notifications } = useQuery<any[]>({ queryKey: ["/api/notifications"] });
+  const unreadCount = (notifications || []).filter((n: any) => !n.isRead).length;
 
   // Ensure login start is set when authenticated
   useEffect(() => {
@@ -71,8 +74,16 @@ function LayoutContent({ children }: LayoutProps) {
           </Button>
         </div>
 
-        {/* Top bar: username + session timer */}
+        {/* Top bar: username + session timer + notifications */}
         <div className="w-full bg-rosae-dark-gray border-b border-gray-600 px-4 py-2 flex items-center justify-end gap-4">
+          <a href="/notifications" className="relative text-gray-300 hover:text-white" title="Notifications">
+            <Bell className="w-5 h-5" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-2 -right-2 bg-red-600 text-white text-xs px-1 rounded">
+                {unreadCount}
+              </span>
+            )}
+          </a>
           <div className="flex items-center text-gray-300 text-sm gap-2">
             <User className="w-4 h-4" />
             <span className="font-medium">{username}</span>

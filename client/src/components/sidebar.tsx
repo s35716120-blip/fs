@@ -68,6 +68,11 @@ const navigationItems = [
     icon: Calendar,
   },
   {
+    name: "Feedback Management",
+    href: "/feedback-management",
+    icon: Calendar,
+  },
+  {
     name: "Customer Tickets",
     href: "/customer-tickets", 
     icon: Ticket,

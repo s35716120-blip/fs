@@ -1,9 +1,9 @@
-import { sql, eq, desc, and, like, gte, lte } from "drizzle-orm";
+import { sql, eq, desc, and, like, gte, lte, inArray } from "drizzle-orm";
 import { db } from "./db";
 import { 
   users, bookings, expenses, leaveApplications, activityLogs, 
   calendarEvents, salesReports, configurations, adSpends, dailyIncome, customerTickets, loginTracker,
-  leaveTypes, leaveBalances, notifications
+  leaveTypes, leaveBalances, notifications, feedbacks, followUps
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -488,6 +488,327 @@ export const storage = {
       .where(eq(leaveApplications.id, applicationId))
       .returning();
     return result[0];
+  },
+
+  // Feedbacks operations
+  async listFeedbacks(filters?: { collected?: boolean; theatreName?: string; date?: string; timeSlot?: string }, page: number = 1, pageSize: number = 20) {
+    // Build simple where on feedbacks for prefiltering
+    const whereParts: any[] = [];
+    if (filters?.theatreName) whereParts.push(eq(feedbacks.theatreName, filters.theatreName));
+    if (filters?.date) whereParts.push(eq(feedbacks.bookingDate, filters.date));
+    if (filters?.timeSlot) whereParts.push(eq(feedbacks.timeSlot, filters.timeSlot));
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+
+    // Join feedbacks with bookings to always have customerName/phoneNumber present
+    const joined = await db
+      .select({ fb: feedbacks, b: bookings })
+      .from(feedbacks)
+      .leftJoin(bookings, eq(feedbacks.bookingId, bookings.id))
+      .where(whereClause)
+      .orderBy(desc(feedbacks.createdAt));
+
+    // Pick latest feedback per bookingId
+    const latestByBooking = new Map<string, any>();
+    for (const r of joined as any[]) {
+      const f = r.fb;
+      if (!latestByBooking.has(f.bookingId)) {
+        latestByBooking.set(f.bookingId, {
+          ...f,
+          customerName: r.b?.customerName || null,
+          phoneNumber: r.b?.phoneNumber || null,
+        });
+      }
+    }
+
+    // Convert to list and apply 'collected' filter on latest
+    let list = Array.from(latestByBooking.values());
+    if (typeof filters?.collected === 'boolean') {
+      list = list.filter((r: any) => r.collected === filters.collected);
+    }
+
+    // Sort by createdAt DESC
+    list.sort((a: any, b: any) => new Date(b.createdAt as any).getTime() - new Date(a.createdAt as any).getTime());
+
+    // Pagination over distinct bookings
+    const total = list.length;
+    const start = Math.max(0, (page - 1) * pageSize);
+    const paged = list.slice(start, start + pageSize);
+
+    return { rows: paged, pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) } };
+  },
+
+  async getLatestFeedbackForBooking(bookingId: string) {
+    const rows = await db.query.feedbacks.findMany({ where: eq(feedbacks.bookingId, bookingId), orderBy: [desc(feedbacks.createdAt)], limit: 1 });
+    return rows?.[0] || null;
+  },
+
+  async upsertFeedback(data: { id?: string; bookingId: string; bookingDate?: string | null; timeSlot?: string | null; theatreName?: string | null; customerName?: string | null; phoneNumber?: string | null; collected: boolean; reason?: string | null; createdBy?: string | null }) {
+    // If id provided, update that record without wiping existing denormalized fields
+    if (data.id) {
+      const existingRows = await db.query.feedbacks.findMany({ where: eq(feedbacks.id, data.id), limit: 1 });
+      const existing = existingRows?.[0] as any;
+      const res = await db.update(feedbacks)
+        .set({
+          bookingId: data.bookingId || existing?.bookingId,
+          bookingDate: (data.bookingDate !== undefined ? data.bookingDate : existing?.bookingDate) ?? null,
+          timeSlot: (data.timeSlot !== undefined ? data.timeSlot : existing?.timeSlot) ?? null,
+          theatreName: (data.theatreName !== undefined ? data.theatreName : existing?.theatreName) ?? null,
+          customerName: (data.customerName !== undefined ? data.customerName : existing?.customerName) ?? null,
+          phoneNumber: (data.phoneNumber !== undefined ? data.phoneNumber : existing?.phoneNumber) ?? null,
+          collected: data.collected,
+          reason: data.collected ? null : (data.reason !== undefined ? data.reason : existing?.reason ?? null),
+          updatedAt: sql`(CURRENT_TIMESTAMP)`
+        })
+        .where(eq(feedbacks.id, data.id))
+        .returning();
+      return res[0];
+    }
+
+    // Otherwise, upsert by latest feedback for the booking
+    const latest = await db.query.feedbacks.findMany({
+      where: eq(feedbacks.bookingId, data.bookingId),
+      orderBy: [desc(feedbacks.createdAt)],
+      limit: 1,
+    });
+    if (latest && latest[0]) {
+      const cur = latest[0] as any;
+      const res = await db.update(feedbacks)
+        .set({
+          bookingId: data.bookingId || cur.bookingId,
+          bookingDate: (data.bookingDate !== undefined ? data.bookingDate : cur.bookingDate) ?? null,
+          timeSlot: (data.timeSlot !== undefined ? data.timeSlot : cur.timeSlot) ?? null,
+          theatreName: (data.theatreName !== undefined ? data.theatreName : cur.theatreName) ?? null,
+          customerName: (data.customerName !== undefined ? data.customerName : cur.customerName) ?? null,
+          phoneNumber: (data.phoneNumber !== undefined ? data.phoneNumber : cur.phoneNumber) ?? null,
+          collected: data.collected,
+          reason: data.collected ? null : (data.reason !== undefined ? data.reason : cur.reason ?? null),
+          updatedAt: sql`(CURRENT_TIMESTAMP)`
+        })
+        .where(eq(feedbacks.id, latest[0].id))
+        .returning();
+      return res[0];
+    }
+
+    // No previous feedback → insert new
+    const res = await db.insert(feedbacks)
+      .values({
+        bookingId: data.bookingId,
+        bookingDate: data.bookingDate ?? null,
+        timeSlot: data.timeSlot ?? null,
+        theatreName: data.theatreName ?? null,
+        customerName: data.customerName ?? null,
+        phoneNumber: data.phoneNumber ?? null,
+        collected: data.collected,
+        reason: data.collected ? null : (data.reason ?? null),
+        createdBy: data.createdBy ?? null,
+      })
+      .returning();
+    return res[0];
+  },
+
+  // Follow-ups operations (extend for feedback type)
+  async createFollowUpForFeedback(input: { bookingId?: string | null; customerName?: string | null; phoneNumber?: string | null; reason: string; dueAt?: string | null; createdBy?: string | null; }) {
+    const res = await db.insert(followUps).values({
+      bookingId: input.bookingId ?? null,
+      customerName: input.customerName ?? null,
+      phoneNumber: input.phoneNumber ?? null,
+      reason: input.reason,
+      type: 'feedback',
+      status: 'pending',
+      dueAt: input.dueAt ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      createdBy: input.createdBy ?? null,
+    }).returning();
+    return res[0];
+  },
+
+  async markFollowUpCompleted(id: string) {
+    // 1) Mark follow-up as completed
+    const updated = await db.update(followUps)
+      .set({ status: 'completed', completedAt: new Date().toISOString() })
+      .where(eq(followUps.id, id))
+      .returning();
+
+    // 2) If this follow-up relates to a booking, mark its feedback as collected and close other pending follow-ups
+    try {
+      const fu = await db.query.followUps.findFirst({ where: eq(followUps.id, id) });
+      const bookingId = (fu as any)?.bookingId;
+      if (bookingId) {
+        // Update latest feedback to collected=true
+        const fbRows = await db.query.feedbacks.findMany({
+          where: eq(feedbacks.bookingId, bookingId),
+          orderBy: [desc(feedbacks.createdAt)],
+          limit: 1,
+        });
+        const latest = fbRows[0] as any;
+        if (latest) {
+          await db.update(feedbacks)
+            .set({ collected: true, reason: null, updatedAt: sql`(CURRENT_TIMESTAMP)` })
+            .where(eq(feedbacks.id, latest.id));
+        } else {
+          // Create a collected feedback record if none exists
+          const booking = await db.query.bookings.findFirst({ where: eq(bookings.id, bookingId) });
+          await db.insert(feedbacks).values({
+            bookingId,
+            bookingDate: (booking as any)?.bookingDate || null,
+            timeSlot: (booking as any)?.timeSlot || null,
+            theatreName: (booking as any)?.theatreName || null,
+            customerName: (booking as any)?.customerName || null,
+            phoneNumber: (booking as any)?.phoneNumber || null,
+            collected: true,
+            reason: null,
+            createdBy: (fu as any)?.createdBy || null,
+          });
+        }
+
+        // Close all other pending follow-ups for this booking and type 'feedback'
+        const openFus = await db.query.followUps.findMany({
+          where: and(eq(followUps.bookingId, bookingId), eq(followUps.type, 'feedback'), eq(followUps.status, 'pending')),
+        });
+        for (const x of openFus as any[]) {
+          await db.update(followUps).set({ status: 'completed', completedAt: new Date().toISOString() }).where(eq(followUps.id, x.id));
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to flip feedback to collected on follow-up completion:', e);
+    }
+
+    return updated[0];
+  },
+
+  async cancelFollowUp(id: string) {
+    const res = await db.update(followUps)
+      .set({ status: 'cancelled', completedAt: new Date().toISOString() })
+      .where(eq(followUps.id, id))
+      .returning();
+    return res[0];
+  },
+
+  async closePendingFollowUpsForBooking(bookingId: string) {
+    const pending = await db.query.followUps.findMany({
+      where: and(eq(followUps.bookingId, bookingId), eq(followUps.type, 'feedback'), eq(followUps.status, 'pending')),
+    });
+    for (const p of pending as any[]) {
+      await db.update(followUps).set({ status: 'completed', completedAt: new Date().toISOString() }).where(eq(followUps.id, p.id));
+    }
+    return pending.length;
+  },
+
+  async listFollowUps(filters?: { type?: string; status?: string }) {
+    const whereParts: any[] = [];
+    if (filters?.type) whereParts.push(eq(followUps.type, filters.type));
+    if (filters?.status) whereParts.push(eq(followUps.status, filters.status));
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+    return db.query.followUps.findMany({ where: whereClause, orderBy: [desc(followUps.createdAt)] });
+  },
+
+  async listBookingsNeedingFeedback(filters?: { theatreName?: string; date?: string; timeSlot?: string }, page: number = 1, pageSize: number = 20) {
+    // Bookings where there is no collected=true feedback record
+    const offset = (page - 1) * pageSize;
+
+    const whereParts: any[] = [];
+    if (filters?.theatreName) whereParts.push(eq(bookings.theatreName, filters.theatreName));
+    if (filters?.date) whereParts.push(eq(bookings.bookingDate, filters.date));
+    if (filters?.timeSlot) whereParts.push(eq(bookings.timeSlot, filters.timeSlot));
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+
+    // Step 1: get candidate bookings
+    const candidate = await db.query.bookings.findMany({ where: whereClause, orderBy: [desc(bookings.createdAt)], limit: pageSize, offset });
+    const bookingIds = candidate.map(b => b.id);
+
+    // Step 2: get feedbacks for these bookings and compute maps
+    let collectedMap = new Map<string, boolean>();
+    let latestFeedbackByBooking = new Map<string, any>();
+    if (bookingIds.length) {
+      const fbRows = await db.query.feedbacks.findMany({
+        where: (feedbacks, { inArray }) => inArray(feedbacks.bookingId, bookingIds as any[]) as any,
+      });
+      for (const f of fbRows as any[]) {
+        if (f.collected) collectedMap.set(f.bookingId, true);
+        const prev = latestFeedbackByBooking.get(f.bookingId);
+        if (!prev) {
+          latestFeedbackByBooking.set(f.bookingId, f);
+        } else {
+          const prevT = new Date(prev.createdAt as any).getTime();
+          const curT = new Date(f.createdAt as any).getTime();
+          if (!Number.isFinite(prevT) || (Number.isFinite(curT) && curT > prevT)) {
+            latestFeedbackByBooking.set(f.bookingId, f);
+          }
+        }
+      }
+    }
+
+    // Step 3: filter out those already collected=true, and attach latest feedback state (if any)
+    const rows = candidate
+      .filter(b => !collectedMap.get(b.id))
+      .map(b => {
+        const fb = latestFeedbackByBooking.get(b.id);
+        return {
+          ...b,
+          collected: fb?.collected ?? null,
+          reason: fb?.reason ?? null,
+        } as any;
+      });
+
+    // Count approximate total: use bookings count then subtract those with collected
+    const totalRow = await db.select({ count: sql`COUNT(*)` }).from(bookings).where(whereClause);
+    const totalApprox = Number(totalRow?.[0]?.count || 0);
+
+    return { rows, pagination: { total: totalApprox, page, pageSize, totalPages: Math.ceil(totalApprox / pageSize) } };
+  },
+
+  // Feedback SLA: notify overdue follow-ups (>1 day)
+  async notifyOverdueFeedbackFollowUps() {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Find pending follow-ups of type 'feedback' past due and not yet notified
+    const overdue = await db.select()
+      .from(followUps)
+      .where(and(eq(followUps.type, 'feedback'), eq(followUps.status, 'pending'), sql`${followUps.dueAt} < ${cutoff}`, sql`${followUps.notifiedOverdueAt} IS NULL`));
+
+    if (!overdue.length) return [];
+
+    // Notify admins and employees (per requirement) for each overdue
+    const allUsers = await db.query.users.findMany();
+    const toNotify = allUsers; // admins + employees
+
+    const created: any[] = [];
+    for (const fu of overdue as any[]) {
+      for (const u of toNotify) {
+        const n = await db.insert(notifications).values({
+          userId: u.id,
+          title: 'Feedback follow-up overdue',
+          body: `Follow-up for booking ${fu.bookingId || ''} is overdue`,
+          type: 'feedback',
+          relatedType: 'follow_up',
+          relatedId: fu.id,
+        }).returning();
+        created.push(n[0]);
+      }
+      await db.update(followUps).set({ notifiedOverdueAt: new Date().toISOString() }).where(eq(followUps.id, (fu as any).id));
+    }
+    return created;
+  },
+
+  async exportFeedbacksCSV(filters?: { collected?: boolean; theatreName?: string; date?: string; timeSlot?: string }) {
+    const whereParts: any[] = [];
+    if (typeof filters?.collected === 'boolean') whereParts.push(eq(feedbacks.collected, filters.collected));
+    if (filters?.theatreName) whereParts.push(eq(feedbacks.theatreName, filters.theatreName));
+    if (filters?.date) whereParts.push(eq(feedbacks.bookingDate, filters.date));
+    if (filters?.timeSlot) whereParts.push(eq(feedbacks.timeSlot, filters.timeSlot));
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+
+    const rows = await db.query.feedbacks.findMany({ where: whereClause, orderBy: [desc(feedbacks.createdAt)] });
+
+    const headers = ['Booking ID','Theatre','Date','Time Slot','Collected','Reason','Created At'];
+    const csv = [headers.join(',')].concat(rows.map((r: any) => [
+      r.bookingId,
+      r.theatreName || '',
+      r.bookingDate || '',
+      r.timeSlot || '',
+      r.collected ? 'Yes' : 'No',
+      (r.reason || '').replace(/"/g, '""'),
+      r.createdAt
+    ].map(v => typeof v === 'string' ? `"${v}"` : String(v)).join(','))).join('\n');
+    return csv;
   },
 
   // Leave types operations

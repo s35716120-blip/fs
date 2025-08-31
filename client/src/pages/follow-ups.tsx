@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
+import { queryClient } from "@/lib/queryClient";
 import Layout from "@/components/layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -76,62 +77,34 @@ export default function FollowUps() {
     }
   }, [isAuthenticated, isLoading, toast]);
 
-  // Load mock follow-ups data
+  // Load follow-ups from API (feedback type)
   useEffect(() => {
-    const mockFollowUps: FollowUp[] = [
-      {
-        id: 1,
-        customerName: "John Doe",
-        phoneNumber: "+91 9876543210",
-        followUpDate: new Date(Date.now() + 86400000).toISOString().split('T')[0], // Tomorrow
-        priority: "high",
-        status: "pending",
-        note: "Customer interested in premium package for anniversary celebration",
-        createdBy: user?.firstName || "Admin",
-        createdAt: new Date().toISOString(),
-        category: "sales"
-      },
-      {
-        id: 2,
-        customerName: "Jane Smith",
-        phoneNumber: "+91 9876543211",
-        followUpDate: new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0], // Day after tomorrow
-        priority: "medium",
-        status: "pending",
-        note: "Follow up on booking cancellation and offer alternative dates",
-        createdBy: user?.firstName || "Admin",
-        createdAt: new Date(Date.now() - 86400000).toISOString(),
-        category: "support"
-      },
-      {
-        id: 3,
-        customerName: "Mike Johnson",
-        phoneNumber: "+91 9876543212",
-        followUpDate: new Date(Date.now() - 86400000).toISOString().split('T')[0], // Yesterday
-        priority: "low",
-        status: "completed",
-        note: "Thank customer for feedback and inform about new shows",
-        createdBy: "Sarah",
-        createdAt: new Date(Date.now() - 3 * 86400000).toISOString(),
-        completedAt: new Date(Date.now() - 86400000).toISOString(),
-        category: "feedback"
-      },
-      {
-        id: 4,
-        customerName: "Emily Davis",
-        phoneNumber: "+91 9876543213",
-        followUpDate: new Date().toISOString().split('T')[0], // Today
-        priority: "high",
-        status: "pending",
-        note: "Customer complained about seating arrangement, offer compensation",
-        createdBy: user?.firstName || "Admin",
-        createdAt: new Date(Date.now() - 2 * 86400000).toISOString(),
-        category: "complaint"
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/follow-ups?type=feedback`);
+        const data = await res.json();
+        const rows = Array.isArray(data?.rows) ? data.rows : [];
+        // Map server rows to UI FollowUp shape
+        const mapped: FollowUp[] = rows.map((r: any) => ({
+          id: r.id,
+          customerName: r.customerName || '-',
+          phoneNumber: r.phoneNumber || '-',
+          followUpDate: (r.dueAt ? new Date(r.dueAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]),
+          priority: 'medium',
+          status: (r.status || 'pending') as any,
+          note: r.reason || '',
+          createdBy: r.createdBy || '-',
+          createdAt: r.createdAt || new Date().toISOString(),
+          completedAt: r.completedAt || undefined,
+          category: (r.type || 'feedback'),
+        }));
+        setFollowUps(mapped);
+        setFilteredFollowUps(mapped);
+      } catch (e: any) {
+        console.error('Failed to load follow-ups', e);
       }
-    ];
-    
-    setFollowUps(mockFollowUps);
-    setFilteredFollowUps(mockFollowUps);
+    };
+    load();
   }, [user]);
 
   // Filter follow-ups based on search and filters
@@ -195,21 +168,55 @@ export default function FollowUps() {
     });
   };
 
-  const updateFollowUpStatus = (id: number, status: FollowUp['status']) => {
-    setFollowUps(followUps.map(followUp => 
-      followUp.id === id 
-        ? { 
-            ...followUp, 
-            status, 
-            completedAt: status === 'completed' ? new Date().toISOString() : undefined 
-          }
-        : followUp
-    ));
+  const updateFollowUpStatus = async (id: any, status: FollowUp['status']) => {
+    try {
+      const patchRes = await fetch(`/api/follow-ups/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        credentials: 'include',
+        cache: 'no-store',
+        body: JSON.stringify({ status }),
+      });
+      const updatedFU = await patchRes.json();
+      // If server returned latestFeedback and it is collected=true, update query cache optimistically
+      if (updatedFU?.latestFeedback && updatedFU.latestFeedback.collected === true) {
+        // We could update client caches here if needed
+      }
+      // Refresh list after update
+      const res = await fetch(`/api/follow-ups?type=feedback&ts=${Date.now()}`, { credentials: 'include', cache: 'no-store', headers: { 'Cache-Control': 'no-store' } });
+      const data = await res.json();
+      const rows = Array.isArray(data?.rows) ? data.rows : [];
+      const mapped: FollowUp[] = rows.map((r: any) => ({
+        id: r.id,
+        customerName: r.customerName || '-',
+        phoneNumber: r.phoneNumber || '-',
+        followUpDate: (r.dueAt ? new Date(r.dueAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]),
+        priority: 'medium',
+        status: (r.status || 'pending') as any,
+        note: r.reason || '',
+        createdBy: r.createdBy || '-',
+        createdAt: r.createdAt || new Date().toISOString(),
+        completedAt: r.completedAt || undefined,
+        category: (r.type || 'feedback'),
+      }));
+      setFollowUps(mapped);
+      setFilteredFollowUps(mapped);
 
-    toast({
-      title: "Status Updated",
-      description: `Follow-up marked as ${status}`,
-    });
+      toast({
+        title: "Status Updated",
+        description: `Follow-up marked as ${status}`,
+      });
+      // If completed, force-mark latest feedback as collected server-side to avoid any stale state
+      if (status === 'completed') {
+        try { await fetch('/api/feedbacks/mark-collected', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, credentials: 'include', cache: 'no-store', body: JSON.stringify({ bookingId: rows?.[0]?.bookingId || undefined }) }); } catch {}
+      }
+      // Invalidate all feedback queries (both Pending and All, any filters)
+      queryClient.invalidateQueries({ predicate: (q) => String(q.queryKey?.[0] || '').startsWith('/api/feedbacks') });
+      // Optionally trigger immediate refetch
+      queryClient.refetchQueries({ predicate: (q) => String(q.queryKey?.[0] || '').startsWith('/api/feedbacks') });
+    } catch (e) {
+      toast({ title: 'Failed to update follow-up', variant: 'destructive' });
+    }
   };
 
   const deleteFollowUp = (id: number) => {
@@ -474,6 +481,10 @@ export default function FollowUps() {
                         <Badge className={getCategoryColor(followUp.category)}>
                           {followUp.category.charAt(0).toUpperCase() + followUp.category.slice(1)}
                         </Badge>
+                        {/* Recently created badge if created within last 5 minutes */}
+                        {(() => { const created = new Date(followUp.createdAt).getTime(); return Date.now() - created < 5*60*1000; })() && (
+                          <Badge className="bg-yellow-600/20 text-yellow-300 border-yellow-600/30">Follow-up created</Badge>
+                        )}
                         {isOverdue(followUp.followUpDate, followUp.status) && (
                           <Badge className="bg-red-600/20 text-red-400 border-red-600/30">
                             Overdue

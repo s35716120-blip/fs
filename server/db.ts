@@ -16,7 +16,14 @@ export function initializeDatabase() {
       sqlite.exec(`ALTER TABLE expenses ADD COLUMN creator_name TEXT`);
     }
   } catch {}
-  
+
+  // Ensure feedbacks has denormalized customer columns (for existing DBs)
+  try {
+    const fInfo = sqlite.prepare(`PRAGMA table_info(feedbacks)`).all() as any[];
+    if (!fInfo.some(c => c.name === 'customer_name')) sqlite.exec(`ALTER TABLE feedbacks ADD COLUMN customer_name TEXT`);
+    if (!fInfo.some(c => c.name === 'phone_number')) sqlite.exec(`ALTER TABLE feedbacks ADD COLUMN phone_number TEXT`);
+  } catch {}
+
   // Create tables with correct schema
   sqlite.exec(`
          CREATE TABLE IF NOT EXISTS users (
@@ -141,6 +148,51 @@ export function initializeDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       deleted_at DATETIME,
+      FOREIGN KEY (booking_id) REFERENCES bookings(id),
+      FOREIGN KEY (created_by) REFERENCES users(id)
+    );
+
+    -- Feedbacks table
+    CREATE TABLE IF NOT EXISTS feedbacks (
+      id TEXT PRIMARY KEY DEFAULT (
+        hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
+        substr(hex(randomblob(2)),2) || '-' ||
+        substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6))
+      ),
+      booking_id TEXT NOT NULL,
+      booking_date TEXT,
+      time_slot TEXT,
+      theatre_name TEXT,
+      customer_name TEXT,
+      phone_number TEXT,
+      collected INTEGER NOT NULL DEFAULT 1,
+      reason TEXT,
+      created_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (booking_id) REFERENCES bookings(id),
+      FOREIGN KEY (created_by) REFERENCES users(id)
+    );
+
+    -- Follow-ups table
+    CREATE TABLE IF NOT EXISTS follow_ups (
+      id TEXT PRIMARY KEY DEFAULT (
+        hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
+        substr(hex(randomblob(2)),2) || '-' ||
+        substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6))
+      ),
+      booking_id TEXT,
+      customer_name TEXT,
+      phone_number TEXT,
+      reason TEXT,
+      type TEXT DEFAULT 'feedback',
+      status TEXT DEFAULT 'pending',
+      due_at TEXT,
+      completed_at TEXT,
+      notified_overdue_at TEXT,
+      created_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (booking_id) REFERENCES bookings(id),
       FOREIGN KEY (created_by) REFERENCES users(id)
     );

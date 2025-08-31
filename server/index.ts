@@ -76,4 +76,15 @@ app.use((req, res, next) => {
   }, () => {
     log(`serving on port ${port}`);
   });
+
+  // Schedule feedback follow-up SLA notifications
+  try {
+    const { storage } = await import('./storage');
+    // run once on boot
+    storage.notifyOverdueFeedbackFollowUps().catch(() => {});
+    // check every 15 minutes
+    setInterval(() => {
+      storage.notifyOverdueFeedbackFollowUps().catch(() => {});
+    }, 15 * 60 * 1000);
+  } catch {}
 })();
