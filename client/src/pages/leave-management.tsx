@@ -12,10 +12,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Calendar, User, CheckCircle, XCircle, Clock } from "lucide-react";
-import { insertLeaveApplicationSchema } from "@shared/schema";
+import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+
+// Local minimal schema to ensure client-side submit works regardless of shared schema changes
+const leaveFormSchema = z.object({
+  leaveType: z.string().min(1, "Leave type is required"),
+  startDate: z.string().min(1, "Start date is required"),
+  endDate: z.string().min(1, "End date is required"),
+  partialDay: z.string().optional(),
+  reason: z.string().min(1, "Reason is required"),
+  keysHolderName: z.string().optional(),
+  coverageByName: z.string().optional(),
+});
 
 export default function LeaveManagement() {
   const { toast } = useToast();
@@ -38,17 +49,25 @@ export default function LeaveManagement() {
   }, [isAuthenticated, isLoading, toast]);
 
   const form = useForm({
-    resolver: zodResolver(insertLeaveApplicationSchema),
+    resolver: zodResolver(leaveFormSchema),
     defaultValues: {
+      leaveType: "PTO",
       startDate: "",
       endDate: "",
+      partialDay: undefined,
       reason: "",
+      keysHolderName: "",
+      coverageByName: "",
     },
   });
 
   const { data: leaveApplications, isLoading: isLeaveLoading, error: leaveError } = useQuery<any[]>({
     queryKey: ["/api/leave-applications"],
   });
+
+  const { data: leaveTypes } = useQuery<any[]>({ queryKey: ["/api/leave-types"] });
+  const { data: balances } = useQuery<any[]>({ queryKey: ["/api/leave-balances"] });
+  const { data: notifications } = useQuery<any[]>({ queryKey: ["/api/notifications"] });
 
   // Handle leave applications error
   useEffect(() => {
@@ -129,7 +148,17 @@ export default function LeaveManagement() {
   });
 
   const onSubmit = (data: any) => {
-    createLeaveMutation.mutate(data);
+    // Submit only the fields the server expects and ignore removed fields
+    const payload = {
+      leaveType: data.leaveType,
+      startDate: data.startDate,
+      endDate: data.endDate,
+      partialDay: data.partialDay || undefined,
+      reason: data.reason,
+      keysHolderName: data.keysHolderName || undefined,
+      coverageByName: data.coverageByName || undefined,
+    };
+    createLeaveMutation.mutate(payload);
   };
 
   const handleStatusUpdate = (id: string, status: string) => {
@@ -181,6 +210,15 @@ export default function LeaveManagement() {
           <div>
             <h2 className="text-2xl font-bold text-white" data-testid="text-page-title">Leave Management</h2>
             <p className="text-gray-400">Manage leave applications and approvals</p>
+            {balances && balances.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {balances.map((b: any) => (
+                  <span key={`${b.leaveTypeCode}-${b.year}`} className="text-xs bg-gray-800 text-gray-200 px-2 py-1 rounded border border-gray-600">
+                    {b.leaveTypeCode}: {Number(b.allocated) - Number(b.used)} left of {Number(b.allocated)}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <Dialog open={isLeaveModalOpen} onOpenChange={setIsLeaveModalOpen}>
             <DialogTrigger asChild>
@@ -198,7 +236,29 @@ export default function LeaveManagement() {
               </DialogHeader>
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="leaveType"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-gray-300">Leave Type</FormLabel>
+                          <FormControl>
+                            <select
+                              className="bg-gray-800 border border-gray-600 text-white rounded px-3 py-2 w-full"
+                              data-testid="select-leave-type"
+                              {...field}
+                            >
+                              {(leaveTypes || [{ code: 'PTO', name: 'Paid Time Off' }]).map((t: any) => (
+                                <option key={t.code} value={t.code}>{t.name}</option>
+                              ))}
+                            </select>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
                     <FormField
                       control={form.control}
                       name="startDate"
@@ -238,6 +298,69 @@ export default function LeaveManagement() {
                     />
                   </div>
 
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="partialDay"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-gray-300">Partial Day</FormLabel>
+                          <FormControl>
+                            <select
+                              className="bg-gray-800 border border-gray-600 text-white rounded px-3 py-2 w-full"
+                              data-testid="select-partial-day"
+                              {...field}
+                            >
+                              <option value="">Full Day</option>
+                              <option value="AM">AM</option>
+                              <option value="PM">PM</option>
+                              <option value="HOURS">Hours</option>
+                            </select>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="keysHolderName"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-gray-300">Keys Holder (name or select)</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="e.g., Kumar"
+                              className="bg-gray-800 border-gray-600 text-white"
+                              data-testid="input-keys-holder"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="coverageByName"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-gray-300">Coverage By (name or select)</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="e.g., Priya"
+                              className="bg-gray-800 border-gray-600 text-white"
+                              data-testid="input-coverage-by"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
                   <FormField
                     control={form.control}
                     name="reason"
@@ -257,6 +380,8 @@ export default function LeaveManagement() {
                       </FormItem>
                     )}
                   />
+
+                  {/* Removed Comp-Off and Manager Override options per request */}
 
                   <div className="flex justify-end space-x-4">
                     <Button

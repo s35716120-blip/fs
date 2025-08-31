@@ -74,16 +74,60 @@ export function initializeDatabase() {
 
     CREATE TABLE IF NOT EXISTS leave_applications (
       id TEXT PRIMARY KEY,
-      employee_name TEXT NOT NULL,
-      leave_type TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      leave_type TEXT NOT NULL DEFAULT 'PTO',
       start_date TEXT NOT NULL,
       end_date TEXT NOT NULL,
+      partial_day TEXT,
       reason TEXT NOT NULL,
+      keys_holder_id TEXT,
+      keys_holder_name TEXT,
+      coverage_by_id TEXT,
+      coverage_by_name TEXT,
+      attach_document_url TEXT,
+      comp_off_used INTEGER DEFAULT 0,
       status TEXT DEFAULT 'pending',
-      created_by TEXT NOT NULL,
+      override_one_day_rule INTEGER DEFAULT 0,
+      override_reason TEXT,
+      reviewed_by TEXT,
+      reviewed_at TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (created_by) REFERENCES users(id)
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (keys_holder_id) REFERENCES users(id),
+      FOREIGN KEY (coverage_by_id) REFERENCES users(id),
+      FOREIGN KEY (reviewed_by) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS leave_types (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL,
+      name TEXT NOT NULL,
+      default_annual INTEGER NOT NULL DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS leave_balances (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      leave_type_code TEXT NOT NULL,
+      year INTEGER NOT NULL,
+      allocated REAL NOT NULL DEFAULT 0,
+      used REAL NOT NULL DEFAULT 0,
+      carried_over REAL NOT NULL DEFAULT 0,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT,
+      type TEXT DEFAULT 'leave',
+      is_read INTEGER NOT NULL DEFAULT 0,
+      related_type TEXT,
+      related_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS customer_tickets (
@@ -223,6 +267,140 @@ export function initializeDatabase() {
     if (!hasNotes) sqlite.exec(`ALTER TABLE customer_tickets ADD COLUMN notes TEXT`);
     if (!hasDeletedAt) sqlite.exec(`ALTER TABLE customer_tickets ADD COLUMN deleted_at DATETIME`);
     if (!hasTimeSlot) sqlite.exec(`ALTER TABLE customer_tickets ADD COLUMN time_slot TEXT`);
+  } catch {}
+
+  // Ensure leave_applications new columns exist (for existing DBs)
+  try {
+    const leaveInfo = sqlite.prepare(`PRAGMA table_info(leave_applications)`).all() as any[];
+    const hasUserId = leaveInfo.some(c => c.name === 'user_id');
+    const addIfMissing = (col: string, ddl: string) => {
+      if (!leaveInfo.some(c => c.name === col)) sqlite.exec(`ALTER TABLE leave_applications ADD COLUMN ${ddl}`);
+    };
+    if (!hasUserId) {
+      // If legacy column employee_name exists, keep it; add user_id nullable
+      sqlite.exec(`ALTER TABLE leave_applications ADD COLUMN user_id TEXT`);
+    }
+    addIfMissing('partial_day', 'partial_day TEXT');
+    addIfMissing('keys_holder_id', 'keys_holder_id TEXT');
+    addIfMissing('keys_holder_name', 'keys_holder_name TEXT');
+    addIfMissing('coverage_by_id', 'coverage_by_id TEXT');
+    addIfMissing('coverage_by_name', 'coverage_by_name TEXT');
+    addIfMissing('attach_document_url', 'attach_document_url TEXT');
+    addIfMissing('comp_off_used', 'comp_off_used INTEGER DEFAULT 0');
+    addIfMissing('override_one_day_rule', 'override_one_day_rule INTEGER DEFAULT 0');
+    addIfMissing('override_reason', 'override_reason TEXT');
+    addIfMissing('reviewed_by', 'reviewed_by TEXT');
+    addIfMissing('reviewed_at', 'reviewed_at TEXT');
+  } catch {}
+
+  // Normalize leave_applications if legacy NOT NULL columns exist (e.g., employee_name)
+  try {
+    const info = sqlite.prepare(`PRAGMA table_info(leave_applications)`).all() as any[];
+    const hasEmployeeName = info.some((c: any) => c.name === 'employee_name');
+    const needsRebuild = hasEmployeeName;
+    if (needsRebuild) {
+      sqlite.exec('BEGIN');
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS leave_applications_new (
+          id TEXT PRIMARY KEY,
+          user_id TEXT,
+          leave_type TEXT NOT NULL DEFAULT 'PTO',
+          start_date TEXT NOT NULL,
+          end_date TEXT NOT NULL,
+          partial_day TEXT,
+          reason TEXT NOT NULL,
+          keys_holder_id TEXT,
+          keys_holder_name TEXT,
+          coverage_by_id TEXT,
+          coverage_by_name TEXT,
+          attach_document_url TEXT,
+          comp_off_used INTEGER DEFAULT 0,
+          status TEXT DEFAULT 'pending',
+          override_one_day_rule INTEGER DEFAULT 0,
+          override_reason TEXT,
+          reviewed_by TEXT,
+          reviewed_at TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users(id),
+          FOREIGN KEY (keys_holder_id) REFERENCES users(id),
+          FOREIGN KEY (coverage_by_id) REFERENCES users(id),
+          FOREIGN KEY (reviewed_by) REFERENCES users(id)
+        );
+      `);
+      const existing = new Set(info.map((c: any) => c.name));
+      const colsToCopy = [
+        'id',
+        existing.has('user_id') ? 'user_id' : 'NULL AS user_id',
+        existing.has('leave_type') ? 'leave_type' : "'PTO' AS leave_type",
+        existing.has('start_date') ? 'start_date' : "'' AS start_date",
+        existing.has('end_date') ? 'end_date' : "'' AS end_date",
+        existing.has('partial_day') ? 'partial_day' : 'NULL AS partial_day',
+        existing.has('reason') ? 'reason' : "'' AS reason",
+        existing.has('keys_holder_id') ? 'keys_holder_id' : 'NULL AS keys_holder_id',
+        existing.has('keys_holder_name') ? 'keys_holder_name' : 'NULL AS keys_holder_name',
+        existing.has('coverage_by_id') ? 'coverage_by_id' : 'NULL AS coverage_by_id',
+        existing.has('coverage_by_name') ? 'coverage_by_name' : 'NULL AS coverage_by_name',
+        existing.has('attach_document_url') ? 'attach_document_url' : 'NULL AS attach_document_url',
+        existing.has('comp_off_used') ? 'comp_off_used' : '0 AS comp_off_used',
+        existing.has('status') ? 'status' : "'pending' AS status",
+        existing.has('override_one_day_rule') ? 'override_one_day_rule' : '0 AS override_one_day_rule',
+        existing.has('override_reason') ? 'override_reason' : 'NULL AS override_reason',
+        existing.has('reviewed_by') ? 'reviewed_by' : 'NULL AS reviewed_by',
+        existing.has('reviewed_at') ? 'reviewed_at' : 'NULL AS reviewed_at',
+        existing.has('created_at') ? 'created_at' : 'CURRENT_TIMESTAMP AS created_at',
+      ];
+      const selectCols = colsToCopy.join(', ');
+      const insertCols = colsToCopy.map((c) => c.replace(/\sAS\s.*$/i, '')).join(', ');
+      sqlite.exec(`INSERT INTO leave_applications_new (${insertCols}) SELECT ${selectCols} FROM leave_applications;`);
+      sqlite.exec(`DROP TABLE leave_applications;`);
+      sqlite.exec(`ALTER TABLE leave_applications_new RENAME TO leave_applications;`);
+      sqlite.exec('COMMIT');
+      console.log('Normalized leave_applications table (removed legacy columns).');
+    }
+  } catch (e) {
+    try { sqlite.exec('ROLLBACK'); } catch {}
+    console.log('Note: could not normalize leave_applications table:', e);
+  }
+
+  // Ensure leave_types table exists
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS leave_types (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL,
+      name TEXT NOT NULL,
+      default_annual INTEGER NOT NULL DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1
+    )`);
+  } catch {}
+
+  // Ensure leave_balances table exists
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS leave_balances (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      leave_type_code TEXT NOT NULL,
+      year INTEGER NOT NULL,
+      allocated REAL NOT NULL DEFAULT 0,
+      used REAL NOT NULL DEFAULT 0,
+      carried_over REAL NOT NULL DEFAULT 0,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )`);
+  } catch {}
+
+  // Ensure notifications table exists
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT,
+      type TEXT DEFAULT 'leave',
+      is_read INTEGER NOT NULL DEFAULT 0,
+      related_type TEXT,
+      related_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )`);
   } catch {}
 
   // Normalize customer_tickets if legacy NOT NULL columns exist (auto-rebuild)

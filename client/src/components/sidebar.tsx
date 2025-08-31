@@ -21,7 +21,8 @@ import {
   Target,
   IndianRupee,
   UserCheck,
-  CalendarDays
+  CalendarDays,
+  Bell
 } from "lucide-react";
 
 const navigationItems = [
@@ -97,6 +98,12 @@ const adminOnlyItems = [
 ];
 
 const adminNavigationItems = [
+  {
+    name: "Leave Admin",
+    href: "/admin/leave",
+    icon: Calendar,
+    adminOnly: true,
+  },
   {
     name: "Others",
     href: "/admin-settings",
@@ -303,6 +310,9 @@ export function Sidebar() {
               {user && user.role === 'admin' ? 'Admin' : 'Employee'}
             </p>
           </div>
+          <a href="/notifications" className="text-gray-300 hover:text-white transition-colors" title="Notifications">
+            <Bell className="w-5 h-5" />
+          </a>
           <button 
             onClick={() => {
               // Reset session timer on logout

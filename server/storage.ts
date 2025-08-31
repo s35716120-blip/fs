@@ -2,7 +2,8 @@ import { sql, eq, desc, and, like, gte, lte } from "drizzle-orm";
 import { db } from "./db";
 import { 
   users, bookings, expenses, leaveApplications, activityLogs, 
-  calendarEvents, salesReports, configurations, adSpends, dailyIncome, customerTickets, loginTracker 
+  calendarEvents, salesReports, configurations, adSpends, dailyIncome, customerTickets, loginTracker,
+  leaveTypes, leaveBalances, notifications
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -485,6 +486,94 @@ export const storage = {
         reviewedAt: new Date().toISOString()
       })
       .where(eq(leaveApplications.id, applicationId))
+      .returning();
+    return result[0];
+  },
+
+  // Leave types operations
+  async getLeaveTypes() {
+    return db.query.leaveTypes.findMany();
+  },
+
+  async upsertLeaveType(data: { id?: string; code: string; name: string; defaultAnnual?: number; active?: boolean }) {
+    if (data.id) {
+      const result = await db.update(leaveTypes)
+        .set({ code: data.code, name: data.name, defaultAnnual: data.defaultAnnual ?? 0, active: data.active ?? true })
+        .where(eq(leaveTypes.id, data.id))
+        .returning();
+      return result[0];
+    }
+    const result = await db.insert(leaveTypes)
+      .values({ code: data.code, name: data.name, defaultAnnual: data.defaultAnnual ?? 0, active: data.active ?? true })
+      .returning();
+    return result[0];
+  },
+
+  // Leave balance operations
+  async getLeaveBalancesByUser(userId: string, year?: number) {
+    const yr = year ?? new Date().getFullYear();
+    return db.query.leaveBalances.findMany({
+      where: and(eq(leaveBalances.userId, userId), eq(leaveBalances.year, yr))
+    });
+  },
+
+  async setLeaveBalance(userId: string, leaveTypeCode: string, year: number, allocated: number) {
+    // Try update, else insert
+    const existing = await db.query.leaveBalances.findFirst({
+      where: and(eq(leaveBalances.userId, userId), eq(leaveBalances.leaveTypeCode, leaveTypeCode), eq(leaveBalances.year, year))
+    });
+    if (existing) {
+      const res = await db.update(leaveBalances)
+        .set({ allocated })
+        .where(eq(leaveBalances.id, existing.id))
+        .returning();
+      return res[0];
+    }
+    const res = await db.insert(leaveBalances)
+      .values({ userId, leaveTypeCode, year, allocated, used: 0, carriedOver: 0 })
+      .returning();
+    return res[0];
+  },
+
+  async adjustLeaveUsed(userId: string, leaveTypeCode: string, year: number, delta: number) {
+    const existing = await db.query.leaveBalances.findFirst({
+      where: and(eq(leaveBalances.userId, userId), eq(leaveBalances.leaveTypeCode, leaveTypeCode), eq(leaveBalances.year, year))
+    });
+    if (!existing) {
+      const res = await db.insert(leaveBalances)
+        .values({ userId, leaveTypeCode, year, allocated: 0, used: Math.max(0, delta), carriedOver: 0 })
+        .returning();
+      return res[0];
+    }
+    const newUsed = Math.max(0, Number(existing.used) + delta);
+    const res = await db.update(leaveBalances)
+      .set({ used: newUsed })
+      .where(eq(leaveBalances.id, existing.id))
+      .returning();
+    return res[0];
+  },
+
+  // Notifications operations
+  async createNotification(data: { userId: string; title: string; body?: string; type?: string; relatedType?: string; relatedId?: string }) {
+    const result = await db.insert(notifications).values({
+      userId: data.userId,
+      title: data.title,
+      body: data.body ?? null,
+      type: data.type ?? 'leave',
+      relatedType: data.relatedType ?? null,
+      relatedId: data.relatedId ?? null,
+    }).returning();
+    return result[0];
+  },
+
+  async listNotifications(userId: string) {
+    return db.query.notifications.findMany({ where: eq(notifications.userId, userId), orderBy: [desc(notifications.createdAt)] });
+  },
+
+  async markNotificationRead(id: string, isRead: boolean = true) {
+    const result = await db.update(notifications)
+      .set({ isRead })
+      .where(eq(notifications.id, id))
       .returning();
     return result[0];
   },

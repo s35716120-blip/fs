@@ -1091,13 +1091,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
           userId,
         });
 
+        // Adjust leave balance on create (simple duration in days)
+        try {
+          const start = new Date(leaveData.startDate);
+          const end = new Date(leaveData.endDate);
+          const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+          const year = start.getFullYear();
+          await storage.adjustLeaveUsed(userId, leaveData.leaveType, year, days);
+        } catch (e) {
+          console.warn('Could not adjust leave balance:', e);
+        }
+
         await storage.logActivity(
           userId,
           "CREATE",
           "LEAVE_APPLICATION",
           leave.id,
-          `Applied for leave from ${leaveData.startDate} to ${leaveData.endDate}`,
+          `Applied for ${leaveData.leaveType} from ${leaveData.startDate} to ${leaveData.endDate}`,
         );
+
+        // Notify user
+        try {
+          await storage.createNotification({
+            userId,
+            title: `Leave request submitted (${leaveData.leaveType})`,
+            body: `${leaveData.startDate} → ${leaveData.endDate}`,
+            relatedType: 'leave_application',
+            relatedId: leave.id,
+          });
+        } catch {}
 
         res.json(leave);
       } catch (error) {
@@ -1143,6 +1165,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
           `${status} leave application`,
         );
 
+        // Notify applicant and adjust balance on approval/rejection
+        try {
+          // Find application to get applicant ID and dates
+          const apps = await storage.getLeaveApplications();
+          const app = apps.find((a: any) => a.id === id);
+          if (app) {
+            const title = `Leave ${status}`;
+            const body = `${app.startDate} → ${app.endDate}`;
+            await storage.createNotification({ userId: app.userId, title, body, relatedType: 'leave_application', relatedId: id });
+            if (status === 'rejected') {
+              const start = new Date(app.startDate);
+              const end = new Date(app.endDate);
+              const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+              const year = start.getFullYear();
+              await storage.adjustLeaveUsed(app.userId, app.leaveType, year, -days);
+            }
+          }
+        } catch (e) {
+          console.warn('Notify/adjust on status error:', e);
+        }
+
         res.json(updatedLeave);
       } catch (error) {
         console.error("Error updating leave status:", error);
@@ -1150,6 +1193,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     },
   );
+
+  // Leave types
+  app.get("/api/leave-types", isAuthenticated, async (req, res) => {
+    try {
+      const types = await storage.getLeaveTypes();
+      res.json(types);
+    } catch (error) {
+      console.error("Error fetching leave types:", error);
+      res.status(500).json({ message: "Failed to fetch leave types" });
+    }
+  });
+
+  // Leave balances
+  app.get("/api/leave-balances", isAuthenticated, async (req: any, res) => {
+    try {
+      const year = req.query.year ? parseInt(req.query.year as string) : undefined;
+      const userId = (req.query.userId as string) || req.user.claims.sub;
+      const balances = await storage.getLeaveBalancesByUser(userId, year);
+      res.json(balances);
+    } catch (error) {
+      console.error("Error fetching leave balances:", error);
+      res.status(500).json({ message: "Failed to fetch leave balances" });
+    }
+  });
+
+  app.post("/api/config/leave-type", isAuthenticated, async (req: any, res) => {
+    try {
+      if (req.user?.claims?.email !== 'admin@rosae.com') {
+        return res.status(403).json({ message: 'Only admins can manage leave types' });
+      }
+      const { id, code, name, defaultAnnual, active } = req.body || {};
+      const saved = await storage.upsertLeaveType({ id, code, name, defaultAnnual, active });
+      res.json(saved);
+    } catch (error) {
+      console.error("Error upserting leave type:", error);
+      res.status(500).json({ message: "Failed to upsert leave type" });
+    }
+  });
+
+  // Admin: Set per-user leave balance (allocation)
+  app.post("/api/admin/leave-balance", isAuthenticated, async (req: any, res) => {
+    try {
+      if (req.user.claims.email !== 'admin@rosae.com' && req.user.claims.role !== 'admin') {
+        return res.status(403).json({ message: 'Only admins can set leave balances' });
+      }
+      const { userId, leaveTypeCode, year, allocated } = req.body || {};
+      if (!userId || !leaveTypeCode || typeof year !== 'number' || typeof allocated !== 'number') {
+        return res.status(400).json({ message: 'userId, leaveTypeCode, year (number), allocated (number) are required' });
+      }
+      const saved = await storage.setLeaveBalance(userId, leaveTypeCode, year, allocated);
+      res.json(saved);
+    } catch (error) {
+      console.error('Error setting leave balance:', error);
+      res.status(500).json({ message: 'Failed to set leave balance' });
+    }
+  });
+
+  // Notifications
+  app.get("/api/notifications", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const list = await storage.listNotifications(userId);
+      res.json(list);
+    } catch (error) {
+      console.error("Error fetching notifications:", error);
+      res.status(500).json({ message: "Failed to fetch notifications" });
+    }
+  });
+
+  app.patch("/api/notifications/:id/read", isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { isRead } = req.body as any;
+      const updated = await storage.markNotificationRead(id, Boolean(isRead ?? true));
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating notification:", error);
+      res.status(500).json({ message: "Failed to update notification" });
+    }
+  });
 
   // Analytics routes
   app.get("/api/analytics/daily-revenue", isAuthenticated, async (req, res) => {

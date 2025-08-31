@@ -114,7 +114,7 @@ export const adSpends = sqliteTable("ad_spends", {
   createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
 });
 
-// Leave Applications
+// Leave Applications (enhanced)
 export const leaveApplications = sqliteTable("leave_applications", {
   id: text("id").primaryKey().default(
     sql`(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
@@ -123,12 +123,73 @@ export const leaveApplications = sqliteTable("leave_applications", {
          substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))`
   ),
   userId: text("user_id").references(() => users.id).notNull(),
+  leaveType: text("leave_type").notNull().default('PTO'),
   startDate: text("start_date").notNull(),
   endDate: text("end_date").notNull(),
+  partialDay: text("partial_day"), // e.g., 'AM', 'PM', 'HOURS' or null for full day
   reason: text("reason").notNull(),
+  // Coverage and keys holder - either id or free text
+  keysHolderId: text("keys_holder_id").references(() => users.id),
+  keysHolderName: text("keys_holder_name"),
+  coverageById: text("coverage_by_id").references(() => users.id),
+  coverageByName: text("coverage_by_name"),
+  // Attachments and flags
+  attachDocumentUrl: text("attach_document_url"),
+  compOffUsed: integer("comp_off_used", { mode: "boolean" }).default(false),
+  // Approvals and overrides
   status: text("status").default("pending"),
+  overrideOneDayRule: integer("override_one_day_rule", { mode: "boolean" }).default(false),
+  overrideReason: text("override_reason"),
   reviewedBy: text("reviewed_by").references(() => users.id),
   reviewedAt: text("reviewed_at"),
+  createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
+});
+
+// Leave Types
+export const leaveTypes = sqliteTable("leave_types", {
+  id: text("id").primaryKey().default(
+    sql`(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
+         substr(hex(randomblob(2)),2) || '-' ||
+         substr('89ab',abs(random()) % 4 + 1, 1) ||
+         substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))`
+  ),
+  code: text("code").notNull(), // e.g., 'SICK', 'CASUAL', 'PTO', 'COMPOFF'
+  name: text("name").notNull(),
+  defaultAnnual: integer("default_annual").notNull().default(0),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+});
+
+// Leave Balances (per user, per type, per year)
+export const leaveBalances = sqliteTable("leave_balances", {
+  id: text("id").primaryKey().default(
+    sql`(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
+         substr(hex(randomblob(2)),2) || '-' ||
+         substr('89ab',abs(random()) % 4 + 1, 1) ||
+         substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))`
+  ),
+  userId: text("user_id").references(() => users.id).notNull(),
+  leaveTypeCode: text("leave_type_code").notNull(),
+  year: integer("year").notNull(),
+  allocated: real("allocated").notNull().default(0),
+  used: real("used").notNull().default(0),
+  carriedOver: real("carried_over").notNull().default(0),
+});
+
+// Notifications
+export const notifications = sqliteTable("notifications", {
+  id: text("id").primaryKey().default(
+    sql`(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
+         substr(hex(randomblob(2)),2) || '-' ||
+         substr('89ab',abs(random()) % 4 + 1, 1) ||
+         substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))`
+  ),
+  userId: text("user_id").references(() => users.id).notNull(),
+  title: text("title").notNull(),
+  body: text("body"),
+  type: text("type").default('leave'),
+  isRead: integer("is_read", { mode: "boolean" }).notNull().default(false),
+  relatedType: text("related_type"),
+  relatedId: text("related_id"),
   createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
 });
 
@@ -306,10 +367,27 @@ export const insertAdSpendSchema = createInsertSchema(adSpends).omit({
 
 export const insertLeaveApplicationSchema = createInsertSchema(leaveApplications).omit({
   id: true,
+  userId: true, // server injects from session
   status: true,
   reviewedBy: true,
   reviewedAt: true,
   createdAt: true,
+}).extend({
+  leaveType: z.string().min(1),
+  partialDay: z.string().optional(),
+  // Either ID or Name may be provided, but not mandatory now
+  keysHolderId: z.string().optional(),
+  keysHolderName: z.string().optional(),
+  coverageById: z.string().optional(),
+  coverageByName: z.string().optional(),
+  attachDocumentUrl: z.string().url().optional(),
+  // Removed comp-off and override requirements
+  compOffUsed: z.boolean().optional(),
+  overrideOneDayRule: z.boolean().optional(),
+  overrideReason: z.string().optional(),
+}).superRefine((data, ctx) => {
+  // Relaxed: no mandatory keys holder / coverage
+  // Relaxed: no 1-day advance enforcement
 });
 
 export const upsertUserSchema = createInsertSchema(users).pick({
@@ -373,6 +451,9 @@ export type InsertConfiguration = z.infer<typeof insertConfigurationSchema>;
 export type Configuration = typeof configurations.$inferSelect;
 export type InsertLeaveApplication = z.infer<typeof insertLeaveApplicationSchema>;
 export type LeaveApplication = typeof leaveApplications.$inferSelect;
+export type LeaveType = typeof leaveTypes.$inferSelect;
+export type LeaveBalance = typeof leaveBalances.$inferSelect;
+export type Notification = typeof notifications.$inferSelect;
 export type ActivityLog = typeof activityLogs.$inferSelect;
 export type InsertCalendarEvent = z.infer<typeof insertCalendarEventSchema>;
 export type CalendarEvent = typeof calendarEvents.$inferSelect;

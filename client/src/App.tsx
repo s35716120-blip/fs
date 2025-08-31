@@ -22,6 +22,8 @@ import AdminSettings from "@/pages/admin-settings";
 import LoginTrackerPage from "@/pages/login-tracker";
 import NotFound from "@/pages/not-found";
 import CustomerTicketsPage from "@/pages/customer-tickets";
+import AdminLeavePage from "@/pages/admin-leave";
+import NotificationsPage from "@/pages/notifications";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -48,12 +50,14 @@ function Router() {
       <Route path="/ad-analytics" component={AdAnalyticsPage} />
       <Route path="/daily-income" component={DailyIncomePage} />
       <Route path="/leave-management" component={LeaveManagement} />
+      <Route path="/admin/leave" component={AdminLeavePage} />
       <Route path="/user-management" component={UserManagement} />
       <Route path="/configuration" component={Configuration} />
       <Route path="/crm" component={CRM} />
       <Route path="/follow-ups" component={FollowUps} />
       <Route path="/admin-settings" component={AdminSettings} />
       <Route path="/customer-tickets" component={CustomerTicketsPage} />
+      <Route path="/notifications" component={NotificationsPage} />
       <Route path="/login-tracker" component={LoginTrackerPage} />
       <Route component={NotFound} />
     </Switch>
