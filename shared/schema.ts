@@ -83,6 +83,9 @@ export const expenses = sqliteTable("expenses", {
   description: text("description").notNull(),
   amount: real("amount").notNull(),
   expenseDate: text("expense_date").notNull(),
+  // Optional payment breakdown
+  paidCash: real("paid_cash"),
+  paidUpi: real("paid_upi"),
   // Name entered in the form for who created this expense
   creatorName: text("creator_name"),
   // Authenticated user id who saved the expense

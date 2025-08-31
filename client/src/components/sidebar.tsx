@@ -26,101 +26,29 @@ import {
 } from "lucide-react";
 
 const navigationItems = [
-  {
-    name: "Dashboard",
-    href: "/",
-    icon: BarChart3,
-  },
-  {
-    name: "New Booking",
-    href: "/bookings",
-    icon: Plus,
-    action: "new-booking"
-  },
-  {
-    name: "All Bookings", 
-    href: "/bookings",
-    icon: Ticket,
-  },
-  {
-    name: "Analytics",
-    href: "/analytics", 
-    icon: PieChart,
-  },
-  {
-    name: "CRM",
-    href: "/crm",
-    icon: UserCheck,
-  },
-  {
-    name: "Follow-ups",
-    href: "/follow-ups",
-    icon: CalendarDays,
-  },
-  {
-    name: "Expenses",
-    href: "/expenses",
-    icon: Wallet,
-  },
-  {
-    name: "Leave Management",
-    href: "/leave-management",
-    icon: Calendar,
-  },
-  {
-    name: "Feedback Management",
-    href: "/feedback-management",
-    icon: Calendar,
-  },
-  {
-    name: "Customer Tickets",
-    href: "/customer-tickets", 
-    icon: Ticket,
-  },
-  {
-    name: "Daily Income",
-    href: "/daily-income",
-    icon: IndianRupee,
-  },
+  { name: "Dashboard", href: "/", icon: BarChart3 },
+  { name: "Expenses", href: "/expenses", icon: Wallet },
+  { name: "Analytics", href: "/analytics", icon: PieChart },
+  { name: "CRM", href: "/crm", icon: UserCheck },
+  { name: "New Booking", href: "/bookings", icon: Plus, action: "new-booking" },
+  { name: "All Bookings", href: "/bookings", icon: Ticket },
+  { name: "Daily Income", href: "/daily-income", icon: IndianRupee },
+  { name: "Feedback Management", href: "/feedback-management", icon: Calendar },
+  { name: "Follow-ups", href: "/follow-ups", icon: CalendarDays },
+  { name: "Customer Tickets", href: "/customer-tickets", icon: Ticket },
+  { name: "Leave Management", href: "/leave-management", icon: Calendar },
 ];
 
 const adminOnlyItems = [
-  {
-    name: "Ad Spend",
-    href: "/ad-spend",
-    icon: Target,
-  },
-  {
-    name: "Ad Analytics",
-    href: "/ad-analytics",
-    icon: TrendingUp,
-  },
-  {
-    name: "User Management", 
-    href: "/user-management",
-    icon: Users,
-  },
+  { name: "Ad Spend", href: "/ad-spend", icon: Target },
+  { name: "Ad Analytics", href: "/ad-analytics", icon: TrendingUp },
+  { name: "User Management", href: "/user-management", icon: Users },
 ];
 
 const adminNavigationItems = [
-  {
-    name: "Leave Admin",
-    href: "/admin/leave",
-    icon: Calendar,
-    adminOnly: true,
-  },
-  {
-    name: "Others",
-    href: "/admin-settings",
-    icon: MoreHorizontal,
-    adminOnly: true,
-  },
-  {
-    name: "Login Tracker",
-    href: "/login-tracker",
-    icon: Users,
-    adminOnly: true,
-  },
+  { name: "Leave Admin", href: "/admin/leave", icon: Calendar, adminOnly: true },
+  { name: "Login Tracker", href: "/login-tracker", icon: Users, adminOnly: true },
+  { name: "Others", href: "/admin-settings", icon: MoreHorizontal, adminOnly: true },
 ];
 
 export function Sidebar() {

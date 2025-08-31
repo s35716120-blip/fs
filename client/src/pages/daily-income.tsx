@@ -209,6 +209,14 @@ export default function DailyIncomePage() {
     });
   }, [records]);
 
+  // Pagination (client-side)
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const totalPages = Math.max(1, Math.ceil((enhancedRecords?.length || 0) / pageSize));
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedRecords = enhancedRecords.slice(startIndex, endIndex);
+
   const handleSubmit = (data: any) => {
     if (editingRecord) {
       updateMutation.mutate({ id: editingRecord.id, data });
@@ -439,6 +447,22 @@ export default function DailyIncomePage() {
             >
               <FileSpreadsheet className="w-4 h-4 mr-2"/> Export CSV
             </Button>
+            <Button 
+              variant="outline" 
+              className="border-gray-600 hover:border-blue-500 hover:bg-blue-500/10 hover:text-blue-400 transition-all duration-300"
+              onClick={async () => {
+                try {
+                  // Sync all bookings across all dates by default
+                  await apiRequest('POST', '/api/daily-income/sync', { mode: 'overwrite' });
+                  toast({ title: 'Synced', description: 'Daily income synced from bookings' });
+                  queryClient.invalidateQueries({ queryKey: ["/api/daily-income"] });
+                } catch (e: any) {
+                  toast({ title: 'Error', description: e?.message || 'Sync failed', variant: 'destructive' });
+                }
+              }}
+            >
+              <TrendingUp className="w-4 h-4 mr-2"/> Sync from Bookings
+            </Button>
           </div>
         </div>
 
@@ -644,7 +668,7 @@ export default function DailyIncomePage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    enhancedRecords.map((record) => (
+                    paginatedRecords.map((record) => (
                       <TableRow key={record.id} className="border-gray-600 group">
                         <TableCell className="text-white font-medium">
                           <div className="flex items-center gap-2">
@@ -721,6 +745,20 @@ export default function DailyIncomePage() {
                 )}
               </Table>
             </div>
+
+            {/* Pagination controls */}
+            {enhancedRecords.length > 0 && (
+              <div className="flex items-center justify-between px-4 py-3 text-gray-300">
+                <div>
+                  Showing {startIndex + 1}-{Math.min(endIndex, enhancedRecords.length)} of {enhancedRecords.length} entries
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={currentPage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>Previous</Button>
+                  <span>Page {currentPage} of {totalPages}</span>
+                  <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>Next</Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 

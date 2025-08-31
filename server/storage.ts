@@ -135,6 +135,21 @@ export const storage = {
   },
 
   async deleteBooking(bookingId: string) {
+    // Delete dependent records first to satisfy FK constraints
+    try {
+      await db.delete(feedbacks).where(eq(feedbacks.bookingId, bookingId));
+    } catch {}
+    try {
+      await db.delete(customerTickets).where(eq(customerTickets.bookingId, bookingId));
+    } catch {}
+    try {
+      await db.delete(followUps).where(eq(followUps.bookingId, bookingId));
+    } catch {}
+    try {
+      await db.delete(calendarEvents).where(eq(calendarEvents.bookingId, bookingId));
+    } catch {}
+
+    // Finally delete the booking itself
     await db.delete(bookings).where(eq(bookings.id, bookingId));
   },
 
@@ -1173,5 +1188,62 @@ export const storage = {
     return db.query.dailyIncome.findFirst({
       where: eq(dailyIncome.id, id)
     });
+  },
+
+  async getDailyIncomeByDate(date: string) {
+    const rows = await db.query.dailyIncome.findMany({
+      where: eq(dailyIncome.date, date),
+      orderBy: [desc(dailyIncome.createdAt as any)]
+    });
+    return rows[0] || null;
+  },
+
+  async syncDailyIncomeFromBookings(params: { startDate?: string; endDate?: string; mode?: 'overwrite' | 'skip' | 'merge' }, userId: string) {
+    const whereParts: any[] = [];
+    if (params.startDate) whereParts.push(sql`${bookings.bookingDate} >= ${params.startDate}`);
+    if (params.endDate) whereParts.push(sql`${bookings.bookingDate} <= ${params.endDate}`);
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+
+    const rows = await db.query.bookings.findMany({ where: whereClause });
+
+    const byDate = new Map<string, { shows: Set<string>; cash: number; upi: number; other: number }>();
+    for (const b of rows) {
+      const d = b.bookingDate as string;
+      if (!byDate.has(d)) byDate.set(d, { shows: new Set<string>(), cash: 0, upi: 0, other: 0 });
+      const agg = byDate.get(d)!;
+      agg.shows.add(`${b.theatreName}|${b.timeSlot}`);
+      agg.cash += Number(b.cashAmount || 0) + Number(b.snacksCash || 0);
+      agg.upi += Number(b.upiAmount || 0) + Number(b.snacksUpi || 0);
+    }
+
+    const results: any[] = [];
+    for (const [date, agg] of byDate.entries()) {
+      const existing = await this.getDailyIncomeByDate(date);
+      const payload = {
+        date,
+        numberOfShows: agg.shows.size,
+        cashReceived: agg.cash,
+        upiReceived: agg.upi,
+        otherPayments: 0,
+      } as any;
+
+      if (!existing) {
+        results.push(await this.createDailyIncome({ ...payload, createdBy: userId }));
+      } else if ((params.mode || 'overwrite') === 'overwrite') {
+        results.push(await this.updateDailyIncome(existing.id, payload));
+      } else if (params.mode === 'merge') {
+        results.push(await this.updateDailyIncome(existing.id, {
+          date,
+          numberOfShows: Number(existing.numberOfShows || 0) + payload.numberOfShows,
+          cashReceived: Number(existing.cashReceived || 0) + payload.cashReceived,
+          upiReceived: Number(existing.upiReceived || 0) + payload.upiReceived,
+          otherPayments: Number(existing.otherPayments || 0) + payload.otherPayments,
+        }));
+      } else {
+        results.push(existing);
+      }
+    }
+
+    return results;
   }
 };

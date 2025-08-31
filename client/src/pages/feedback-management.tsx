@@ -127,6 +127,15 @@ export default function FeedbackManagementPage() {
     return map;
   }, [followUpsQuery?.data]);
 
+  // Pagination (client-side)
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const total = rows.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedRows = rows.slice(startIndex, endIndex);
+
   return (
     <Layout>
       <div className="p-6 space-y-4">
@@ -200,7 +209,7 @@ export default function FeedbackManagementPage() {
                 <div>Collected</div>
                 <div>Reason</div>
               </div>
-              {(rows || []).map((row: any) => (
+              {(paginatedRows || []).map((row: any) => (
                 <RowItem
                   key={(row?.id || row?.bookingId) + (row?.bookingId || '')}
                   row={row}
@@ -212,6 +221,18 @@ export default function FeedbackManagementPage() {
               ))}
               {(!rows || rows.length === 0) && (
                 <div className="p-6 text-gray-400">No records</div>
+              )}
+              {rows && rows.length > 0 && (
+                <div className="flex items-center justify-between px-4 py-3 text-gray-300">
+                  <div>
+                    Showing {startIndex + 1}-{Math.min(endIndex, total)} of {total} entries
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={currentPage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>Previous</Button>
+                    <span>Page {currentPage} of {totalPages}</span>
+                    <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>Next</Button>
+                  </div>
+                </div>
               )}
             </div>
           </CardContent>

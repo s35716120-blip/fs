@@ -47,6 +47,7 @@ export default function Expenses() {
   const [selectedCategory, setSelectedCategory] = useState<string>("");
   const [selectedCreator, setSelectedCreator] = useState<string>("");
   const [dateRange, setDateRange] = useState<{ startDate: string; endDate: string }>({ startDate: "", endDate: "" });
+  const [paidViaFilter, setPaidViaFilter] = useState<string>("");
   const printSectionRef = useRef<HTMLDivElement>(null);
   
   // Pagination: show recent 10 entries by default
@@ -56,7 +57,7 @@ export default function Expenses() {
   // Reset to first page whenever filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedCategory, selectedCreator, dateRange.startDate, dateRange.endDate]);
+  }, [selectedCategory, selectedCreator, paidViaFilter, dateRange.startDate, dateRange.endDate]);
   
   // State for configuration data
   const [expenseCategories, setExpenseCategories] = useState<string[]>(DEFAULT_EXPENSE_CATEGORIES);
@@ -84,6 +85,9 @@ export default function Expenses() {
       amount: "",
       expenseDate: new Date().toISOString().split('T')[0],
       creatorName: expenseCreators.length > 0 ? expenseCreators[0] : "",
+      paidVia: "", // '', 'cash', 'upi', 'both'
+      paidCash: "",
+      paidUpi: "",
     },
   });
   
@@ -201,13 +205,23 @@ export default function Expenses() {
 
   const onSubmit = (data: any) => {
     // Ensure all required fields are present and properly formatted
-    const expenseData = {
+    const expenseData: any = {
       category: data.category,
       description: data.description,
       amount: parseFloat(data.amount),
       expenseDate: data.expenseDate,
-      creatorName: data.creatorName
+      creatorName: data.creatorName,
     };
+    // Optional paid via
+    const via = data.paidVia;
+    const cash = data.paidCash ? parseFloat(data.paidCash) : undefined;
+    const upi = data.paidUpi ? parseFloat(data.paidUpi) : undefined;
+    if (via === 'cash' && typeof cash === 'number') expenseData.paidCash = cash;
+    if (via === 'upi' && typeof upi === 'number') expenseData.paidUpi = upi;
+    if (via === 'both') {
+      if (typeof cash === 'number') expenseData.paidCash = cash;
+      if (typeof upi === 'number') expenseData.paidUpi = upi;
+    }
     
     createExpenseMutation.mutate(expenseData);
   };
@@ -348,6 +362,16 @@ export default function Expenses() {
     return new Date(dateString).toLocaleDateString('en-IN');
   };
 
+  // Helper: derive display label for paid method from optional fields
+  const getPaidViaLabel = (expense: any) => {
+    const cash = Number(expense.paidCash || 0);
+    const upi = Number(expense.paidUpi || 0);
+    if (cash > 0 && upi > 0) return 'U&C';
+    if (cash > 0) return 'Cash';
+    if (upi > 0) return 'UPI';
+    return '-';
+  };
+
   if (isLoading || isConfigLoading) {
     return (
       <div className="min-h-screen bg-rosae-black flex items-center justify-center">
@@ -396,6 +420,16 @@ export default function Expenses() {
 
     if (dateRange.endDate && new Date(expense.expenseDate) > new Date(dateRange.endDate)) {
       return false;
+    }
+
+    if (paidViaFilter) {
+      const label = getPaidViaLabel(expense);
+      // Match selected filter: 'cash', 'upi', or 'both' (U&C)
+      if (paidViaFilter === 'both') {
+        if (label !== 'U&C') return false;
+      } else {
+        if (label.toLowerCase() !== paidViaFilter) return false;
+      }
     }
 
     return true;
@@ -551,6 +585,69 @@ export default function Expenses() {
                           )}
                         />
                       </div>
+
+                      {/* Optional payment method section */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="paidVia"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-gray-300">Paid Via (optional)</FormLabel>
+                              <Select onValueChange={(v) => {
+                                const mapped = v === '__NONE__' ? '' : v;
+                                field.onChange(mapped);
+                                // When switching mode, clear amounts to avoid stale values
+                                if (mapped !== 'cash') form.setValue('paidCash', '');
+                                if (mapped !== 'upi') form.setValue('paidUpi', '');
+                              }} value={field.value === '' ? '__NONE__' : (field.value as string)}>
+                                <FormControl>
+                                  <SelectTrigger className="bg-gray-800 border-gray-600 text-white h-9">
+                                    <SelectValue placeholder="Not specified" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent className="bg-gray-800 border-gray-600">
+                                  <SelectItem value="__NONE__">Not specified</SelectItem>
+                                  <SelectItem value="cash">Cash</SelectItem>
+                                  <SelectItem value="upi">UPI</SelectItem>
+                                  <SelectItem value="both">Both (split)</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        {(form.watch('paidVia') === 'cash' || form.watch('paidVia') === 'both') && (
+                          <FormField
+                            control={form.control}
+                            name="paidCash"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-gray-300">Cash Amount</FormLabel>
+                                <FormControl>
+                                  <Input type="number" step="0.01" placeholder="0" className="bg-gray-800 border-gray-600 text-white h-9" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        )}
+                        {(form.watch('paidVia') === 'upi' || form.watch('paidVia') === 'both') && (
+                          <FormField
+                            control={form.control}
+                            name="paidUpi"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-gray-300">UPI Amount</FormLabel>
+                                <FormControl>
+                                  <Input type="number" step="0.01" placeholder="0" className="bg-gray-800 border-gray-600 text-white h-9" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        )}
+                      </div>
                       <FormField
                         control={form.control}
                         name="description"
@@ -634,6 +731,23 @@ export default function Expenses() {
                         {creator}
                       </SelectItem>
                     ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="w-48">
+                <Label className="text-gray-300 mb-1 block">Paid Via</Label>
+                <Select
+                  onValueChange={(v) => setPaidViaFilter(v === "__ALL__" ? "" : v)}
+                  value={paidViaFilter === "" ? "__ALL__" : paidViaFilter}
+                >
+                  <SelectTrigger className="bg-gray-800 border-gray-600 text-white h-9">
+                    <SelectValue placeholder="All" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-gray-800 border-gray-600">
+                    <SelectItem value="__ALL__">All</SelectItem>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="upi">UPI</SelectItem>
+                    <SelectItem value="both">U&C</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -773,6 +887,7 @@ export default function Expenses() {
                           <th className="pb-3">Category</th>
                           <th className="pb-3">Description</th>
                           <th className="pb-3">Created By</th>
+                          <th className="pb-3">Paid Via</th>
                           <th className="pb-3">Amount</th>
                         </tr>
                       </thead>
@@ -792,6 +907,7 @@ export default function Expenses() {
                             </td>
                             <td className="py-4 text-gray-300 max-w-xs truncate">{expense.description}</td>
                             <td className="py-4 text-gray-300">{expense.creatorName || 'Unknown'}</td>
+                            <td className="py-4 text-gray-300">{getPaidViaLabel(expense)}</td>
                             <td className="py-4 font-semibold">
                               <div className="flex items-center text-rosae-red">
                                 <IndianRupee className="w-4 h-4 mr-1" />

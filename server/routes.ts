@@ -1028,6 +1028,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Sync daily income from bookings within a date range
+  app.post("/api/daily-income/sync", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { startDate, endDate, mode } = req.body || {};
+      const results = await storage.syncDailyIncomeFromBookings({ startDate, endDate, mode }, userId);
+      res.json({ success: true, records: results });
+    } catch (error) {
+      console.error("Error syncing daily income:", error);
+      res.status(500).json({ message: "Failed to sync daily income" });
+    }
+  });
+
   app.get("/api/expenses", isAuthenticated, async (req: any, res) => {
     try {
       const { limit } = req.query;
@@ -1038,6 +1051,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching expenses:", error);
       res.status(500).json({ message: "Failed to fetch expenses" });
+    }
+  });
+
+  // Export expenses as CSV (optional category filter)
+  app.get("/api/expenses/export", isAuthenticated, async (req: any, res) => {
+    try {
+      const category = (req.query.category as string) || "";
+      const rows = category
+        ? await storage.getExpensesByCategory(category)
+        : await storage.getAllExpenses();
+
+      // CSV helpers
+      const q = (v: any) => `"${(v ?? '').toString().replace(/"/g, '""')}"`;
+      const getPaidViaLabel = (r: any) => {
+        const cash = Number(r.paidCash || 0);
+        const upi = Number(r.paidUpi || 0);
+        if (cash > 0 && upi > 0) return 'U&C';
+        if (cash > 0) return 'Cash';
+        if (upi > 0) return 'UPI';
+        return '-';
+      };
+
+      const header = [
+        'Date',
+        'Category',
+        'Description',
+        'Created By',
+        'Paid Via',
+        'Paid Cash',
+        'Paid UPI',
+        'Amount',
+      ];
+
+      const lines = rows.map((r: any) => [
+        q(r.expenseDate),
+        q(r.category),
+        q(r.description || ''),
+        q(r.creatorName || ''),
+        q(getPaidViaLabel(r)),
+        q(r.paidCash ?? ''),
+        q(r.paidUpi ?? ''),
+        q(r.amount),
+      ].join(','));
+
+      const csv = [header.join(','), ...lines].join('\n');
+      const filename = `expenses${category ? '_' + category : ''}.csv`;
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(csv);
+    } catch (error) {
+      console.error("Error exporting expenses:", error);
+      res.status(500).json({ message: "Failed to export expenses" });
     }
   });
 

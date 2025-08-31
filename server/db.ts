@@ -15,6 +15,12 @@ export function initializeDatabase() {
     if (!hasCreatorName) {
       sqlite.exec(`ALTER TABLE expenses ADD COLUMN creator_name TEXT`);
     }
+    if (!info.some((c) => c.name === 'paid_cash')) {
+      sqlite.exec(`ALTER TABLE expenses ADD COLUMN paid_cash REAL`);
+    }
+    if (!info.some((c) => c.name === 'paid_upi')) {
+      sqlite.exec(`ALTER TABLE expenses ADD COLUMN paid_upi REAL`);
+    }
   } catch {}
 
   // Ensure feedbacks has denormalized customer columns (for existing DBs)

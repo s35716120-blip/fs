@@ -53,6 +53,10 @@ export default function FollowUps() {
   const [isAddingFollowUp, setIsAddingFollowUp] = useState(false);
   const [editingFollowUp, setEditingFollowUp] = useState<FollowUp | null>(null);
   
+  // Pagination (client-side)
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  
   const [newFollowUp, setNewFollowUp] = useState({
     customerName: "",
     phoneNumber: "",
@@ -131,6 +135,8 @@ export default function FollowUps() {
     }
 
     setFilteredFollowUps(filtered);
+    // Reset to first page when filters/search change
+    setCurrentPage(1);
   }, [followUps, searchTerm, statusFilter, priorityFilter]);
 
   const addFollowUp = () => {
@@ -453,10 +459,18 @@ export default function FollowUps() {
               </CardContent>
             </Card>
           ) : (
-            filteredFollowUps.map((followUp) => (
-              <Card key={followUp.id} className="bg-rosae-dark-gray border-gray-600">
-                <CardContent className="p-6">
-                  <div className="flex items-start justify-between">
+            (() => {
+              const total = filteredFollowUps.length;
+              const totalPages = Math.max(1, Math.ceil(total / pageSize));
+              const startIndex = (currentPage - 1) * pageSize;
+              const endIndex = Math.min(startIndex + pageSize, total);
+              const pageItems = filteredFollowUps.slice(startIndex, endIndex);
+              return (
+                <>
+                  {pageItems.map((followUp) => (
+                    <Card key={followUp.id} className="bg-rosae-dark-gray border-gray-600">
+                      <CardContent className="p-6">
+                        <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-3">
                         <div className="w-10 h-10 bg-rosae-red rounded-full flex items-center justify-center">
@@ -569,9 +583,25 @@ export default function FollowUps() {
                   </div>
                 </CardContent>
               </Card>
-            ))
-          )}
-        </div>
+            ))}
+            </>
+          );
+        })()
+      )}
+    </div>
+        {/* Pagination controls */}
+        {filteredFollowUps.length > 0 && (
+          <div className="flex items-center justify-between px-4 py-3 text-gray-300">
+            <div>
+              {(() => { const total = filteredFollowUps.length; const start = (currentPage - 1) * pageSize; const end = Math.min(start + pageSize, total); return `Showing ${start + 1}-${end} of ${total} entries`; })()}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={currentPage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>Previous</Button>
+              <span>{(() => { const total = filteredFollowUps.length; const pages = Math.max(1, Math.ceil(total / pageSize)); return `Page ${currentPage} of ${pages}`; })()}</span>
+              <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={(() => { const total = filteredFollowUps.length; const pages = Math.max(1, Math.ceil(total / pageSize)); return currentPage === pages; })()} onClick={() => setCurrentPage(p => { const total = filteredFollowUps.length; const pages = Math.max(1, Math.ceil(total / pageSize)); return Math.min(pages, p + 1); })}>Next</Button>
+            </div>
+          </div>
+        )}
       </div>
     </Layout>
   );
