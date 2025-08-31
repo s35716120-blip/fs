@@ -55,7 +55,8 @@ export default function CRM() {
   const { isAuthenticated, isLoading, user } = useAuth();
   const [phoneNumber, setPhoneNumber] = useState("");
   const [searchDate, setSearchDate] = useState(""); // optional booking date filter (YYYY-MM-DD)
-  const [searchSlot, setSearchSlot] = useState(""); // optional time slot filter
+  const [searchSlot, setSearchSlot] = useState("");
+  const [availableSlots, setAvailableSlots] = useState<string[]>([]); // options from config
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [customerHistory, setCustomerHistory] = useState<any[]>([]);
@@ -70,6 +71,22 @@ export default function CRM() {
   const [followUpNote, setFollowUpNote] = useState("");
   const [customerRating, setCustomerRating] = useState(5);
   const [loyaltyPoints, setLoyaltyPoints] = useState(0);
+  
+  // Load time slots from config for slot selector
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const res = await fetch('/api/config');
+        if (res.ok) {
+          const cfg = await res.json();
+          setAvailableSlots(Array.isArray(cfg?.timeSlots) ? cfg.timeSlots : []);
+        }
+      } catch (e) {
+        // ignore
+      }
+    };
+    loadConfig();
+  }, []);
   
   // Role-based permissions
   const isAdmin = user?.role === "admin";
@@ -549,13 +566,17 @@ export default function CRM() {
               </div>
               <div>
                 <Label htmlFor="searchSlot" className="text-gray-300">Time Slot (optional)</Label>
-                <Input
+                <select
                   id="searchSlot"
                   value={searchSlot}
                   onChange={(e) => setSearchSlot(e.target.value)}
-                  placeholder="e.g. 7:00 PM"
-                  className="bg-gray-800 border-gray-600 text-white"
-                />
+                  className="bg-gray-800 border-gray-600 text-white rounded-md h-10 px-3"
+                >
+                  <option value="">All</option>
+                  {availableSlots.map((slot) => (
+                    <option key={slot} value={slot}>{slot}</option>
+                  ))}
+                </select>
               </div>
               <Button onClick={searchBooking} className="bg-rosae-red hover:bg-rosae-dark-red">
                 <Search className="w-4 h-4 mr-2" />
