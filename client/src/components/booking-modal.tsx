@@ -86,6 +86,8 @@ export function BookingModal({ isOpen, onClose, onSuccess }: BookingModalProps) 
         title: "Success",
         description: "Booking created successfully",
       });
+      // Reset session timer start to now to reflect fresh login activity (optional UX)
+      try { localStorage.setItem("loginStart", Date.now().toString()); } catch {}
       queryClient.invalidateQueries({ queryKey: ["/api/bookings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/analytics/daily-revenue"] });
       queryClient.invalidateQueries({ queryKey: ["/api/analytics/payment-methods"] });

@@ -103,6 +103,12 @@ const adminNavigationItems = [
     icon: MoreHorizontal,
     adminOnly: true,
   },
+  {
+    name: "Login Tracker",
+    href: "/login-tracker",
+    icon: Users,
+    adminOnly: true,
+  },
 ];
 
 export function Sidebar() {
@@ -298,7 +304,11 @@ export function Sidebar() {
             </p>
           </div>
           <button 
-            onClick={handleLogout}
+            onClick={() => {
+              // Reset session timer on logout
+              try { localStorage.removeItem("loginStart"); } catch {}
+              handleLogout();
+            }}
             className="text-gray-400 hover:text-white transition-colors"
             title="Sign Out"
             data-testid="button-logout"

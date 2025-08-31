@@ -19,7 +19,9 @@ import Configuration from "@/pages/configuration";
 import CRM from "@/pages/crm";
 import FollowUps from "@/pages/follow-ups";
 import AdminSettings from "@/pages/admin-settings";
+import LoginTrackerPage from "@/pages/login-tracker";
 import NotFound from "@/pages/not-found";
+import CustomerTicketsPage from "@/pages/customer-tickets";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -51,6 +53,8 @@ function Router() {
       <Route path="/crm" component={CRM} />
       <Route path="/follow-ups" component={FollowUps} />
       <Route path="/admin-settings" component={AdminSettings} />
+      <Route path="/customer-tickets" component={CustomerTicketsPage} />
+      <Route path="/login-tracker" component={LoginTrackerPage} />
       <Route component={NotFound} />
     </Switch>
   );

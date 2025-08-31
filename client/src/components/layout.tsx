@@ -2,14 +2,53 @@ import { Sidebar } from "@/components/sidebar";
 import { SidebarProvider, useSidebar } from "@/contexts/SidebarContext";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Menu } from "lucide-react";
+import { Menu, Clock, User } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { useEffect, useMemo, useState } from "react";
 
 interface LayoutProps {
   children: React.ReactNode;
 }
 
+function formatDuration(ms: number) {
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600).toString().padStart(2, "0");
+  const m = Math.floor((totalSec % 3600) / 60).toString().padStart(2, "0");
+  const s = Math.floor(totalSec % 60).toString().padStart(2, "0");
+  return `${h}:${m}:${s}`;
+}
+
 function LayoutContent({ children }: LayoutProps) {
   const { isOpen, toggle } = useSidebar();
+  const { user, isAuthenticated } = useAuth();
+  const [now, setNow] = useState(Date.now());
+
+  // Ensure login start is set when authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      const key = "loginStart";
+      if (!localStorage.getItem(key)) {
+        localStorage.setItem(key, Date.now().toString());
+      }
+    }
+  }, [isAuthenticated]);
+
+  // Tick every second
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const sessionTime = useMemo(() => {
+    const start = Number(localStorage.getItem("loginStart"));
+    if (!start) return "00:00:00";
+    return formatDuration(now - start);
+  }, [now]);
+
+  const username = useMemo(() => {
+    const email = user?.email || "";
+    return email.includes("@") ? email.split("@")[0] : email || "User";
+  }, [user?.email]);
 
   return (
     <div className="flex min-h-screen bg-rosae-black">
@@ -31,6 +70,19 @@ function LayoutContent({ children }: LayoutProps) {
             <Menu className="w-6 h-6" />
           </Button>
         </div>
+
+        {/* Top bar: username + session timer */}
+        <div className="w-full bg-rosae-dark-gray border-b border-gray-600 px-4 py-2 flex items-center justify-end gap-4">
+          <div className="flex items-center text-gray-300 text-sm gap-2">
+            <User className="w-4 h-4" />
+            <span className="font-medium">{username}</span>
+          </div>
+          <div className="flex items-center text-gray-300 text-sm gap-2">
+            <Clock className="w-4 h-4" />
+            <span title="Session duration">{sessionTime}</span>
+          </div>
+        </div>
+
         <div className="min-h-full">
           {children}
         </div>

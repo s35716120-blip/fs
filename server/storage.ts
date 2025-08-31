@@ -1,10 +1,11 @@
-import { sql, eq, desc, and, like } from "drizzle-orm";
+import { sql, eq, desc, and, like, gte, lte } from "drizzle-orm";
 import { db } from "./db";
 import { 
   users, bookings, expenses, leaveApplications, activityLogs, 
-  calendarEvents, salesReports, configurations, adSpends, dailyIncome 
+  calendarEvents, salesReports, configurations, adSpends, dailyIncome, customerTickets, loginTracker 
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
+import { randomUUID } from "crypto";
 
 // Create a storage interface for database operations
 export const storage = {
@@ -95,6 +96,35 @@ export const storage = {
     });
   },
 
+  // Find a specific booking by phone number + date + time slot
+  async getBookingByPhoneDateAndSlot(phoneNumber: string, bookingDate: string, timeSlot: string) {
+    // Normalize inputs to be more tolerant (trim, case-insensitive)
+    const pn = phoneNumber.trim();
+    const dt = bookingDate.trim();
+    const slot = timeSlot.trim();
+    // Try exact first, then case-insensitive match if needed
+    const exact = await db.query.bookings.findFirst({
+      where: (bookings, { and, eq }) => and(
+        eq(bookings.phoneNumber, pn),
+        eq(bookings.bookingDate, dt),
+        eq(bookings.timeSlot, slot)
+      ),
+      orderBy: [desc(bookings.createdAt)],
+    });
+    if (exact) return exact;
+
+    // Fallback: compare normalized timeSlot in memory (case-insensitive)
+    const rows = await db.query.bookings.findMany({
+      where: (bookings, { and, eq }) => and(
+        eq(bookings.phoneNumber, pn),
+        eq(bookings.bookingDate, dt)
+      ),
+      orderBy: (bookings, { desc }) => [desc(bookings.createdAt)],
+    });
+    const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase();
+    return rows.find(r => norm(r.timeSlot) === norm(slot));
+  },
+
   async updateBooking(bookingId: string, updateData: any) {
     const result = await db.update(bookings)
       .set(updateData)
@@ -150,13 +180,26 @@ export const storage = {
       ? and(...whereConditions)
       : undefined;
     
-    // Get filtered results
-    const results = await db.select()
+    // Get filtered results joined with creator info
+    const rows = await db
+      .select({
+        b: bookings,
+        creatorEmail: users.email,
+        creatorFirstName: users.firstName,
+        creatorLastName: users.lastName,
+      })
       .from(bookings)
+      .leftJoin(users, eq(bookings.createdBy, users.id))
       .where(whereClause)
       .orderBy(desc(bookings.createdAt))
       .limit(pageSize)
       .offset(offset);
+
+    const results = rows.map((r: any) => ({
+      ...r.b,
+      createdByEmail: r.creatorEmail || null,
+      createdByName: ((r.creatorFirstName || '') + ' ' + (r.creatorLastName || '')).trim() || null,
+    }));
     
     // Get total count for pagination with filters
     const countQuery = db.select({ count: sql`count(*)` })
@@ -176,6 +219,108 @@ export const storage = {
     };
   },
   
+  // Tickets operations
+  async createTicket(data: { bookingId: string; reason: string; notes?: string; timeSlot?: string; createdBy?: string }) {
+    const result = await db.insert(customerTickets).values({
+      bookingId: data.bookingId,
+      reason: data.reason,
+      notes: data.notes,
+      timeSlot: data.timeSlot,
+      createdBy: data.createdBy,
+    }).returning();
+    return result[0];
+  },
+
+  async updateTicket(id: string, update: Partial<{ reason: string; notes: string; status: string }>) {
+    const result = await db.update(customerTickets)
+      .set({ ...update, updatedAt: new Date().toISOString() })
+      .where(eq(customerTickets.id, id))
+      .returning();
+    return result[0];
+  },
+
+  async softDeleteTicket(id: string) {
+    const result = await db.update(customerTickets)
+      .set({ status: 'deleted', deletedAt: new Date().toISOString() })
+      .where(eq(customerTickets.id, id))
+      .returning();
+    return result[0];
+  },
+
+  async getTickets(params: {
+    page?: number;
+    pageSize?: number;
+    bookingId?: string;
+    phoneNumber?: string;
+    reason?: string;
+    timeSlot?: string;
+    startDate?: string;
+    endDate?: string;
+  }) {
+    const page = params.page ?? 1;
+    const pageSize = params.pageSize ?? 10;
+    const offset = (page - 1) * pageSize;
+
+    const baseWhere: any[] = [sql`deleted_at IS NULL`];
+
+    // Build query depending on whether phoneNumber filter is used
+    if (params.phoneNumber) {
+      // Join with bookings to filter by phone
+      const whereJoinParts: any[] = [...baseWhere, eq(bookings.phoneNumber, params.phoneNumber)];
+      if (params.reason) whereJoinParts.push(eq(customerTickets.reason, params.reason));
+      if (params.timeSlot) whereJoinParts.push(eq(customerTickets.timeSlot, params.timeSlot));
+      if (params.startDate && params.endDate) {
+        whereJoinParts.push(and(gte(customerTickets.createdAt, params.startDate), lte(customerTickets.createdAt, params.endDate)));
+      }
+      if (params.bookingId) whereJoinParts.push(eq(customerTickets.bookingId, params.bookingId));
+      const whereClause = and(...whereJoinParts);
+
+      const rows = await db
+        .select({ ticket: customerTickets })
+        .from(customerTickets)
+        .leftJoin(bookings, eq(bookings.id, customerTickets.bookingId))
+        .where(whereClause)
+        .orderBy(desc(customerTickets.createdAt))
+        .limit(pageSize)
+        .offset(offset);
+
+      const countRes = await db
+        .select({ count: sql`count(*)` })
+        .from(customerTickets)
+        .leftJoin(bookings, eq(bookings.id, customerTickets.bookingId))
+        .where(whereClause)
+        .execute();
+
+      const total = Number(countRes[0]?.count || 0);
+      const tickets = rows.map(r => r.ticket);
+      return { tickets, pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) } };
+    } else {
+      // No phone filter → simple table query
+      const whereParts: any[] = [...baseWhere];
+      if (params.bookingId) whereParts.push(eq(customerTickets.bookingId, params.bookingId));
+      if (params.reason) whereParts.push(eq(customerTickets.reason, params.reason));
+      if (params.timeSlot) whereParts.push(eq(customerTickets.timeSlot, params.timeSlot));
+      if (params.startDate && params.endDate) {
+        whereParts.push(and(gte(customerTickets.createdAt, params.startDate), lte(customerTickets.createdAt, params.endDate)));
+      }
+      const whereClause = and(...whereParts);
+
+      const rows = await db.select().from(customerTickets)
+        .where(whereClause)
+        .orderBy(desc(customerTickets.createdAt))
+        .limit(pageSize)
+        .offset(offset);
+
+      const countRes = await db.select({ count: sql`count(*)` })
+        .from(customerTickets)
+        .where(whereClause)
+        .execute();
+      const total = Number(countRes[0]?.count || 0);
+
+      return { tickets: rows, pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) } };
+    }
+  },
+
   // Expense operations
   async createExpense(expenseData: any) {
     const result = await db.insert(expenses).values(expenseData).returning();
@@ -204,6 +349,66 @@ export const storage = {
       ),
       orderBy: [desc(expenses.createdAt)]
     });
+  },
+
+  // Login tracker operations
+  async logLogin(entry: { userId: string; email?: string | null; deviceType?: string | null; userAgent?: string | null; ipAddress?: string | null }) {
+    const now = new Date().toISOString();
+    const row = await db.insert(loginTracker).values({
+      id: randomUUID(),
+      userId: entry.userId,
+      email: entry.email || null,
+      deviceType: entry.deviceType || null,
+      userAgent: entry.userAgent || null,
+      ipAddress: entry.ipAddress || null,
+      loginTime: now,
+    }).returning();
+    return row[0];
+  },
+
+  async logLogout(userId: string) {
+    // Find latest open session for user and close it
+    const rows = await db.select().from(loginTracker)
+      .where(and(eq(loginTracker.userId, userId), sql`logout_time IS NULL`))
+      .orderBy(desc(loginTracker.loginTime))
+      .limit(1);
+    const open = rows[0];
+    if (!open) return null;
+
+    const logoutTime = new Date().toISOString();
+    const durationSec = Math.max(0, Math.floor((new Date(logoutTime).getTime() - new Date(open.loginTime!).getTime()) / 1000));
+    const updated = await db.update(loginTracker)
+      .set({ logoutTime, sessionDurationSec: durationSec })
+      .where(eq(loginTracker.id, open.id))
+      .returning();
+    return updated[0];
+  },
+
+  async listLogins(filters?: { startDate?: string; endDate?: string; userId?: string; email?: string }) {
+    const where: any[] = [];
+    if (filters?.startDate && filters?.endDate) {
+      where.push(sql`login_time >= ${filters.startDate} AND login_time <= ${filters.endDate}`);
+    }
+    if (filters?.userId) where.push(eq(loginTracker.userId, filters.userId));
+    if (filters?.email) where.push(eq(loginTracker.email, filters.email));
+    const clause = where.length ? and(...where) : undefined;
+    // Join users to include names and better identity info
+    const rows = await db
+      .select({
+        log: loginTracker,
+        firstName: users.firstName,
+        lastName: users.lastName,
+      })
+      .from(loginTracker)
+      .leftJoin(users, eq(loginTracker.userId, users.id))
+      .where(clause)
+      .orderBy(desc(loginTracker.loginTime));
+
+    return rows.map((r: any) => ({
+      ...r.log,
+      firstName: r.firstName || null,
+      lastName: r.lastName || null,
+    }));
   },
 
   // Ad spend operations

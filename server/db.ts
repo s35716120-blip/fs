@@ -88,14 +88,16 @@ export function initializeDatabase() {
 
     CREATE TABLE IF NOT EXISTS customer_tickets (
       id TEXT PRIMARY KEY,
-      customer_name TEXT NOT NULL,
-      issue TEXT NOT NULL,
-      description TEXT,
+      booking_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      notes TEXT,
+      time_slot TEXT,
       status TEXT DEFAULT 'open',
-      priority TEXT DEFAULT 'medium',
-      created_by TEXT NOT NULL,
+      created_by TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      deleted_at DATETIME,
+      FOREIGN KEY (booking_id) REFERENCES bookings(id),
       FOREIGN KEY (created_by) REFERENCES users(id)
     );
 
@@ -192,7 +194,87 @@ export function initializeDatabase() {
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (created_by) REFERENCES users(id)
     );
+
+    CREATE TABLE IF NOT EXISTS login_tracker (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      email TEXT,
+      login_time TEXT NOT NULL,
+      logout_time TEXT,
+      session_duration_sec INTEGER,
+      device_type TEXT,
+      user_agent TEXT,
+      ip_address TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
   `);
+
+  // Ensure customer_tickets has required columns (for existing DBs)
+  try {
+    const info = sqlite.prepare(`PRAGMA table_info(customer_tickets)`).all() as any[];
+    const hasBookingId = info.some((c) => c.name === 'booking_id');
+    const hasReason = info.some((c) => c.name === 'reason');
+    const hasNotes = info.some((c) => c.name === 'notes');
+    const hasDeletedAt = info.some((c) => c.name === 'deleted_at');
+    const hasTimeSlot = info.some((c) => c.name === 'time_slot');
+    if (!hasBookingId) sqlite.exec(`ALTER TABLE customer_tickets ADD COLUMN booking_id TEXT`);
+    if (!hasReason) sqlite.exec(`ALTER TABLE customer_tickets ADD COLUMN reason TEXT`);
+    if (!hasNotes) sqlite.exec(`ALTER TABLE customer_tickets ADD COLUMN notes TEXT`);
+    if (!hasDeletedAt) sqlite.exec(`ALTER TABLE customer_tickets ADD COLUMN deleted_at DATETIME`);
+    if (!hasTimeSlot) sqlite.exec(`ALTER TABLE customer_tickets ADD COLUMN time_slot TEXT`);
+  } catch {}
+
+  // Normalize customer_tickets if legacy NOT NULL columns exist (auto-rebuild)
+  try {
+    const info = sqlite.prepare(`PRAGMA table_info(customer_tickets)`).all() as any[];
+    const hasCustomerName = info.some((c: any) => c.name === 'customer_name');
+    const hasIssue = info.some((c: any) => c.name === 'issue');
+    const hasPriority = info.some((c: any) => c.name === 'priority');
+    const needsRebuild = hasCustomerName || hasIssue || hasPriority;
+    if (needsRebuild) {
+      sqlite.exec('BEGIN');
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS customer_tickets_new (
+          id TEXT PRIMARY KEY,
+          booking_id TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          notes TEXT,
+          time_slot TEXT,
+          status TEXT DEFAULT 'open',
+          created_by TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          deleted_at DATETIME,
+          FOREIGN KEY (booking_id) REFERENCES bookings(id),
+          FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+      `);
+      const existing = new Set(info.map((c: any) => c.name));
+      const colsToCopy = [
+        'id',
+        existing.has('booking_id') ? 'booking_id' : "'' AS booking_id",
+        existing.has('reason') ? 'reason' : "'' AS reason",
+        existing.has('notes') ? 'notes' : 'NULL AS notes',
+        existing.has('time_slot') ? 'time_slot' : 'NULL AS time_slot',
+        existing.has('status') ? 'status' : "'open' AS status",
+        existing.has('created_by') ? 'created_by' : 'NULL AS created_by',
+        existing.has('created_at') ? 'created_at' : 'CURRENT_TIMESTAMP AS created_at',
+        existing.has('updated_at') ? 'updated_at' : 'CURRENT_TIMESTAMP AS updated_at',
+        existing.has('deleted_at') ? 'deleted_at' : 'NULL AS deleted_at',
+      ];
+      const selectCols = colsToCopy.join(', ');
+      const insertCols = colsToCopy.map((c) => c.replace(/\sAS\s.*$/i, '')).join(', ');
+      sqlite.exec(`INSERT INTO customer_tickets_new (${insertCols}) SELECT ${selectCols} FROM customer_tickets;`);
+      sqlite.exec(`DROP TABLE customer_tickets;`);
+      sqlite.exec(`ALTER TABLE customer_tickets_new RENAME TO customer_tickets;`);
+      sqlite.exec('COMMIT');
+      console.log('Normalized customer_tickets table (dropped legacy columns).');
+    }
+  } catch (e) {
+    try { sqlite.exec('ROLLBACK'); } catch {}
+    console.log('Note: could not normalize customer_tickets table:', e);
+  }
 
   // Insert sample data for daily income if table is empty
   try {

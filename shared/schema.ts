@@ -206,12 +206,45 @@ export const dailyIncome = sqliteTable("daily_income", {
   updatedAt: text("updated_at").default(sql`(CURRENT_TIMESTAMP)`),
 });
 
+// Customer Tickets
+export const customerTickets = sqliteTable("customer_tickets", {
+  id: text("id").primaryKey().default(
+    sql`(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))`
+  ),
+  bookingId: text("booking_id").references(() => bookings.id).notNull(),
+  reason: text("reason").notNull(),
+  notes: text("notes"),
+  // Optional denormalized time slot for easier filtering without join
+  timeSlot: text("time_slot"),
+  status: text("status").default("open"),
+  createdBy: text("created_by").references(() => users.id),
+  createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
+  updatedAt: text("updated_at").default(sql`(CURRENT_TIMESTAMP)`),
+  deletedAt: text("deleted_at"),
+});
+
 // Configurations
 export const configurations = sqliteTable("configurations", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
   updatedBy: text("updated_by").references(() => users.id),
   updatedAt: text("updated_at").default(sql`(CURRENT_TIMESTAMP)`),
+});
+
+// Login Tracker
+export const loginTracker = sqliteTable("login_tracker", {
+  id: text("id").primaryKey().default(
+    sql`(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))`
+  ),
+  userId: text("user_id").references(() => users.id).notNull(),
+  email: text("email"),
+  loginTime: text("login_time").notNull(),
+  logoutTime: text("logout_time"),
+  sessionDurationSec: integer("session_duration_sec"),
+  deviceType: text("device_type"),
+  userAgent: text("user_agent"),
+  ipAddress: text("ip_address"),
+  createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
 });
 
 /* ---------------- SCHEMAS ---------------- */
@@ -319,6 +352,14 @@ export const insertConfigurationSchema = createInsertSchema(configurations).omit
   updatedAt: true,
 });
 
+export const insertCustomerTicketSchema = createInsertSchema(customerTickets).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  deletedAt: true,
+  createdBy: true,
+});
+
 /* ---------------- TYPES ---------------- */
 export type UpsertUser = z.infer<typeof upsertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -339,3 +380,5 @@ export type InsertSalesReport = z.infer<typeof insertSalesReportSchema>;
 export type SalesReport = typeof salesReports.$inferSelect;
 export type InsertDailyIncome = z.infer<typeof insertDailyIncomeSchema>;
 export type DailyIncome = typeof dailyIncome.$inferSelect;
+export type InsertCustomerTicket = z.infer<typeof insertCustomerTicketSchema>;
+export type CustomerTicket = typeof customerTickets.$inferSelect;

@@ -6,6 +6,7 @@ import {
   insertBookingSchema,
   insertExpenseSchema,
   insertLeaveApplicationSchema,
+  insertCustomerTicketSchema,
   type Booking,
 } from "@shared/schema";
 import session from "express-session";
@@ -169,6 +170,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log("Checking credentials:", { email, password });
 
+      // Helper to set session and log login
+      const finalizeLogin = async (user: any) => {
+        (req as any).session.user = {
+          claims: {
+            sub: user.id,
+            email: user.email,
+            first_name: user.firstName,
+            last_name: user.lastName,
+            profile_image_url: user.profileImageUrl || null,
+          },
+          access_token: "dev-token",
+        };
+        console.log("Session set:", (req as any).session);
+
+        // Log login
+        try {
+          await storage.logLogin({
+            userId: user.id,
+            email: user.email,
+            deviceType: (req.headers["sec-ch-ua-platform"] as string) || null,
+            userAgent: req.headers["user-agent"] as string,
+            ipAddress: (req.headers["x-forwarded-for"] as string) || (req.socket.remoteAddress || null) as any,
+          });
+        } catch (e) {
+          console.error("Failed to log login event:", e);
+        }
+
+        return res.json(user);
+      };
+
       // Check if it's admin login
       if (email === "admin@rosae.com" && password === "Rosae@spaces") {
         console.log("Admin credentials valid");
@@ -195,20 +226,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.error("Error creating admin user in database:", dbError);
         }
 
-        // Set session with claims structure to match isAuthenticated middleware
-        (req as any).session.user = {
-          claims: {
-            sub: user.id,
-            email: user.email,
-            first_name: user.firstName,
-            last_name: user.lastName,
-            profile_image_url: null,
-          },
-          access_token: "dev-token",
-        };
-        console.log("Session set:", (req as any).session);
-
-        res.json(user);
+        return await finalizeLogin(user);
       } else {
         // Check for employee login
         try {
@@ -245,27 +263,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (isValidPassword) {
               console.log("✅ Employee login successful for:", user.email);
 
-              // Set session with claims structure
-              (req as any).session.user = {
-                claims: {
-                  sub: user.id,
-                  email: user.email,
-                  first_name: user.firstName,
-                  last_name: user.lastName,
-                  profile_image_url: user.profileImageUrl,
-                },
-                access_token: "dev-token",
-              };
-              console.log(
-                "Session created for employee:",
-                (req as any).session.user,
-              );
-
-              res.json({
+              return await finalizeLogin({
                 id: user.id,
                 email: user.email,
                 firstName: user.firstName,
                 lastName: user.lastName,
+                profileImageUrl: user.profileImageUrl,
                 role: user.role,
               });
             } else {
@@ -288,8 +291,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Logout route
-  app.post("/api/auth/logout", (req, res) => {
-    (req as any).session.destroy((err: any) => {
+  app.post("/api/auth/logout", async (req: any, res) => {
+    try {
+      const userId = req.session?.user?.claims?.sub;
+      if (userId) {
+        try { await storage.logLogout(userId); } catch (e) { console.error('Failed to log logout:', e); }
+      }
+    } catch {}
+
+    req.session.destroy((err: any) => {
       if (err) {
         console.error("Logout error:", err);
         return res.status(500).json({ message: "Logout failed" });
@@ -373,6 +383,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching users:", error);
       res.status(500).json({ message: "Failed to fetch users" });
+    }
+  });
+
+  // Login tracker routes (admin)
+  app.get("/api/login-tracker", isAuthenticated, async (req: any, res) => {
+    try {
+      const currentUser = req.user;
+      const isAdmin = currentUser.claims.email === "admin@rosae.com";
+
+      let { startDate, endDate, userId, email } = req.query as any;
+
+      // Non-admins can only view their own login records
+      if (!isAdmin) {
+        userId = currentUser.claims.sub;
+        email = currentUser.claims.email;
+      }
+
+      const rows = await storage.listLogins({ startDate, endDate, userId, email });
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching login tracker:", error);
+      res.status(500).json({ message: "Failed to fetch login tracker" });
     }
   });
 
@@ -1332,6 +1364,100 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error creating booking via webhook:", error);
       res.status(500).json({ message: "Failed to create booking" });
+    }
+  });
+
+  // Tickets routes
+  app.post("/api/tickets", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      // Accept either bookingId OR (phoneNumber + bookingDate [+ timeSlot])
+      const { bookingId: bodyBookingId, phoneNumber, bookingDate, timeSlot, reason, notes } = req.body || {};
+      if (!reason) return res.status(400).json({ message: "Reason is required" });
+
+      let bookingId = bodyBookingId as string | undefined;
+      let resolvedTimeSlot: string | undefined = timeSlot;
+
+      if (!bookingId) {
+        if (!phoneNumber || !bookingDate) {
+          return res.status(400).json({ message: "Provide bookingId or phoneNumber + bookingDate" });
+        }
+        // If timeSlot is provided, try exact booking lookup
+        if (timeSlot) {
+          const matched = await storage.getBookingByPhoneDateAndSlot(String(phoneNumber), String(bookingDate), String(timeSlot));
+          if (!matched) return res.status(404).json({ message: "No booking found for given phone/date/slot" });
+          bookingId = matched.id;
+          resolvedTimeSlot = matched.timeSlot;
+        } else {
+          // Fallback: find latest booking by phone + date if multiple
+          const bookingsForPhone = await storage.getBookingsByPhoneNumber(String(phoneNumber));
+          const match = bookingsForPhone
+            .filter(b => String(b.bookingDate).trim() === String(bookingDate).trim())
+            .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime())[0];
+          if (!match) return res.status(404).json({ message: "No booking found for given phone/date" });
+          bookingId = match.id;
+          resolvedTimeSlot = match.timeSlot;
+        }
+      }
+
+      // validate booking exists
+      const booking = await storage.getBookingById(bookingId);
+      if (!booking) return res.status(404).json({ message: "Booking not found" });
+
+      const ticket = await storage.createTicket({ bookingId, reason, notes, timeSlot: resolvedTimeSlot ?? booking.timeSlot, createdBy: userId });
+      res.status(201).json(ticket);
+    } catch (error) {
+      console.error("Create ticket error:", error);
+      res.status(500).json({ message: "Failed to create ticket" });
+    }
+  });
+
+  app.get("/api/tickets", isAuthenticated, async (req, res) => {
+    try {
+      const { page, pageSize, bookingId, phoneNumber, reason, timeSlot, startDate, endDate } = req.query as any;
+
+      const result = await storage.getTickets({
+        page: page ? Number(page) : 1,
+        pageSize: pageSize ? Number(pageSize) : 10,
+        bookingId: (bookingId as string) || undefined,
+        phoneNumber: (phoneNumber as string) || undefined,
+        reason: reason && reason !== 'all' ? reason : undefined,
+        timeSlot: (timeSlot as string) || undefined,
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+      });
+      res.json(result);
+    } catch (error) {
+      console.error("List tickets error:", error);
+      res.status(500).json({ message: "Failed to fetch tickets" });
+    }
+  });
+
+  app.patch("/api/tickets/:id", isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params as any;
+      const { reason, notes, status } = req.body || {};
+      if (!reason && !notes && !status) {
+        return res.status(400).json({ message: "No fields to update" });
+      }
+      const updated = await storage.updateTicket(id, { reason, notes, status });
+      if (!updated) return res.status(404).json({ message: "Ticket not found" });
+      res.json(updated);
+    } catch (error) {
+      console.error("Update ticket error:", error);
+      res.status(500).json({ message: "Failed to update ticket" });
+    }
+  });
+
+  app.delete("/api/tickets/:id", isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params as any;
+      const deleted = await storage.softDeleteTicket(id);
+      if (!deleted) return res.status(404).json({ message: "Ticket not found" });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Delete ticket error:", error);
+      res.status(500).json({ message: "Failed to delete ticket" });
     }
   });
 

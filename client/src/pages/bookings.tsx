@@ -253,6 +253,7 @@ export default function Bookings() {
                 <th>Snacks Total</th>
                 <th>Snacks Cash</th>
                 <th>Snacks UPI</th>
+                <th>Created By</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -274,6 +275,7 @@ export default function Bookings() {
                   <td>${formatCurrency(Number(booking.snacksAmount || 0))}</td>
                   <td>${formatCurrency(Number(booking.snacksCash || 0))}</td>
                   <td>${formatCurrency(Number(booking.snacksUpi || 0))}</td>
+                  <td>${booking.createdByName || booking.createdByEmail || booking.createdBy || 'N/A'}</td>
                   <td><span class="status ${getPaymentStatus(Number(booking.totalAmount)) === 'full' ? 'yes' : 'partial'}">${getPaymentStatus(Number(booking.totalAmount)) === 'full' ? 'Full Payment' : 'Partial Payment'}</span></td>
                 </tr>
               `).join('')}
@@ -496,6 +498,7 @@ export default function Bookings() {
                         <th className="pb-3">Total Amount</th>
                         <th className="pb-3">Cash</th>
                         <th className="pb-3">UPI</th>
+                        <th className="pb-3">Created By</th>
                         <th className="pb-3">Payment Status</th>
                         <th className="pb-3">Actions</th>
                       </tr>
@@ -555,6 +558,9 @@ export default function Bookings() {
                           </td>
                           <td className="py-4 text-green-400 font-medium">{formatCurrency(Number(booking.cashAmount))}</td>
                           <td className="py-4 text-purple-400 font-medium">{formatCurrency(Number(booking.upiAmount))}</td>
+                          <td className="py-4 text-sm text-gray-300">
+                            {booking.createdByName || booking.createdByEmail || booking.createdBy || 'N/A'}
+                          </td>
                           <td className="py-4">
                             <Badge className={paymentStatus === 'full'
                               ? 'bg-green-600/20 text-green-400 border-green-600/30'
