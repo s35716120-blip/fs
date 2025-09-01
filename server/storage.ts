@@ -225,43 +225,47 @@ export const storage = {
 
   // Admin: clear all data except users and configurations
   async clearAllDataExceptUsersAndConfig() {
-    // Prefer raw SQL to ignore FK constraints if any and ensure full cleanup
-    // Note: SQLite in this project may not enforce FKs, but we handle order anyway.
-    const statements = [
-      // children first
-      "DELETE FROM reviews;",
-      "DELETE FROM refund_requests;",
-      "DELETE FROM customer_tickets;",
-      "DELETE FROM feedbacks;",
-      "DELETE FROM follow_ups;",
-      "DELETE FROM calendar_events;",
-      "DELETE FROM sales_reports;",
-      "DELETE FROM daily_income;",
-      "DELETE FROM expenses;",
-      "DELETE FROM ad_spends;",
-      "DELETE FROM lead_infos;",
-      "DELETE FROM revenue_goals;",
-      "DELETE FROM notifications;",
-      "DELETE FROM login_tracker;",
-      "DELETE FROM leave_balances;",
-      "DELETE FROM leave_applications;",
-      "DELETE FROM leave_types;",
-      "DELETE FROM activity_logs;",
-      // bookings after dependents
-      "DELETE FROM bookings;",
-      // sessions last
-      "DELETE FROM sessions;",
+    // Disable FK checks to ensure deletions succeed in any order
+    execRaw("PRAGMA foreign_keys = OFF;");
+
+    const targets: { name: string; sql: string }[] = [
+      { name: 'reviews', sql: 'DELETE FROM reviews;' },
+      { name: 'refund_requests', sql: 'DELETE FROM refund_requests;' },
+      { name: 'customer_tickets', sql: 'DELETE FROM customer_tickets;' },
+      { name: 'feedbacks', sql: 'DELETE FROM feedbacks;' },
+      { name: 'follow_ups', sql: 'DELETE FROM follow_ups;' },
+      { name: 'calendar_events', sql: 'DELETE FROM calendar_events;' },
+      { name: 'sales_reports', sql: 'DELETE FROM sales_reports;' },
+      { name: 'daily_income', sql: 'DELETE FROM daily_income;' },
+      { name: 'expenses', sql: 'DELETE FROM expenses;' },
+      { name: 'ad_spends', sql: 'DELETE FROM ad_spends;' },
+      { name: 'lead_infos', sql: 'DELETE FROM lead_infos;' },
+      { name: 'revenue_goals', sql: 'DELETE FROM revenue_goals;' },
+      { name: 'notifications', sql: 'DELETE FROM notifications;' },
+      { name: 'login_tracker', sql: 'DELETE FROM login_tracker;' },
+      { name: 'leave_balances', sql: 'DELETE FROM leave_balances;' },
+      { name: 'leave_applications', sql: 'DELETE FROM leave_applications;' },
+      { name: 'leave_types', sql: 'DELETE FROM leave_types;' },
+      { name: 'activity_logs', sql: 'DELETE FROM activity_logs;' },
+      { name: 'bookings', sql: 'DELETE FROM bookings;' },
+      { name: 'sessions', sql: 'DELETE FROM sessions;' },
     ];
 
-    try {
-      for (const s of statements) {
-        execRaw(s);
+    const results: Record<string, 'ok' | string> = {};
+
+    for (const t of targets) {
+      try {
+        execRaw(t.sql);
+        results[t.name] = 'ok';
+      } catch (e: any) {
+        results[t.name] = e?.message || 'error';
+        // continue with next table instead of failing the whole operation
       }
-      return { ok: true };
-    } catch (e) {
-      console.error('clearAllDataExceptUsersAndConfig failed', e);
-      return { ok: false, error: String(e) } as any;
     }
+
+    execRaw("PRAGMA foreign_keys = ON;");
+
+    return { ok: true, results };
   },
 
   // Find a specific booking by phone number + date + time slot
