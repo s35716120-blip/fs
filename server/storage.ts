@@ -4,7 +4,7 @@ import { db } from "./db";
 import { 
   users, bookings, expenses, leaveApplications, activityLogs, 
   calendarEvents, salesReports, configurations, adSpends, dailyIncome, customerTickets, loginTracker,
-  leaveTypes, leaveBalances, notifications, feedbacks, followUps, refundRequests, leadInfos, revenueGoals, reviews
+  leaveTypes, leaveBalances, notifications, feedbacks, followUps, refundRequests, leadInfos, revenueGoals, reviews, sessions
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
