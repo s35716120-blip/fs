@@ -77,6 +77,8 @@ export const bookings = sqliteTable("bookings", {
   refundedAt: text("refunded_at"),
   refundRequestedBy: text("refund_requested_by").references(() => users.id),
   refundApprovedBy: text("refund_approved_by").references(() => users.id),
+  // Review flag to indicate customer has confirmed leaving a review
+  reviewFlag: integer("review_flag", { mode: "boolean" }).notNull().default(false),
 });
 
 // Expenses
@@ -314,6 +316,25 @@ export const customerTickets = sqliteTable("customer_tickets", {
   createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
   updatedAt: text("updated_at").default(sql`(CURRENT_TIMESTAMP)`),
   deletedAt: text("deleted_at"),
+});
+
+// Reviews table for customer review collection
+export const reviews = sqliteTable("reviews", {
+  id: text("id").primaryKey().default(
+    sql`(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))`
+  ),
+  bookingId: text("booking_id").references(() => bookings.id).notNull(),
+  phone: text("phone"),
+  name: text("name"),
+  token: text("token").notNull(),
+  status: text("status").default("pending"), // pending | submitted | verified | expired
+  requestedAt: text("requested_at").default(sql`(CURRENT_TIMESTAMP)`),
+  submittedAt: text("submitted_at"),
+  verifiedAt: text("verified_at"),
+  verificationMethod: text("verification_method"), // 'gmaps' | 'manual'
+  gmapsPlaceId: text("gmaps_place_id"),
+  gmapsReviewId: text("gmaps_review_id"),
+  note: text("note"),
 });
 
 // Lead Info (daily shift-based lead tracking)

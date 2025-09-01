@@ -142,6 +142,7 @@ export default function LoginPage() {
               </Button>
 
               <p className="text-xs text-neutral-500 text-center">Use your assigned email and password</p>
+              <p className="text-xs text-neutral-500 text-center mt-2">Guest? Try <a href="/quick-signin" className="text-blue-400 underline">Quick Sign-in</a></p>
             </form>
 
             <div className="text-center">

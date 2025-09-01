@@ -46,6 +46,8 @@ export function initializeDatabase() {
     addIfMissing('refunded_at', 'refunded_at TEXT');
     addIfMissing('refund_requested_by', 'refund_requested_by TEXT');
     addIfMissing('refund_approved_by', 'refund_approved_by TEXT');
+    // Ensure review flag exists for reviews feature
+    addIfMissing('review_flag', 'review_flag INTEGER NOT NULL DEFAULT 0');
   } catch {}
 
   // Ensure feedbacks has denormalized customer columns (for existing DBs)
@@ -101,6 +103,7 @@ export function initializeDatabase() {
       refunded_at TEXT,
       refund_requested_by TEXT,
       refund_approved_by TEXT,
+      review_flag INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (created_by) REFERENCES users(id),
       FOREIGN KEY (refund_requested_by) REFERENCES users(id),
       FOREIGN KEY (refund_approved_by) REFERENCES users(id)
@@ -193,6 +196,24 @@ export function initializeDatabase() {
       deleted_at DATETIME,
       FOREIGN KEY (booking_id) REFERENCES bookings(id),
       FOREIGN KEY (created_by) REFERENCES users(id)
+    );
+
+    -- Reviews table
+    CREATE TABLE IF NOT EXISTS reviews (
+      id TEXT PRIMARY KEY,
+      booking_id TEXT NOT NULL,
+      phone TEXT,
+      name TEXT,
+      token TEXT NOT NULL,
+      status TEXT DEFAULT 'pending',
+      requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      submitted_at DATETIME,
+      verified_at DATETIME,
+      verification_method TEXT,
+      gmaps_place_id TEXT,
+      gmaps_review_id TEXT,
+      note TEXT,
+      FOREIGN KEY (booking_id) REFERENCES bookings(id)
     );
 
     -- Lead Infos table

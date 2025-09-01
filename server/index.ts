@@ -1,11 +1,31 @@
+import "dotenv/config"; // Load .env first
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import dotenv from "dotenv";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 import { initializeDatabase } from "./db";
 
-// Load environment variables from .env file
-dotenv.config();
+// Log where .env is expected from and values; avoid multiple config() calls
+try {
+  const cwdEnv = path.resolve(process.cwd(), ".env");
+  const here = fileURLToPath(import.meta.url);
+  const hereDir = path.dirname(here);
+  const distEnv = path.resolve(hereDir, "..", ".env");
+  const candidates = [cwdEnv, distEnv];
+  const found = candidates.find(p => fs.existsSync(p));
+  if (found) {
+    console.log(`[env] expected from: ${found}`);
+  } else {
+    console.log(`[env] using default dotenv search (no explicit .env found)`);
+  }
+  console.log(`[env] GOOGLE_REVIEW_URL=${process.env.GOOGLE_REVIEW_URL || '<undefined>'}`);
+  console.log(`[env] GOOGLE_PLACE_ID=${process.env.GOOGLE_PLACE_ID || '<undefined>'}`);
+  console.log(`[env] REVIEW_OVERRIDE=${process.env.REVIEW_OVERRIDE || '<undefined>'}`);
+  console.log(`[env] PLACE_ID=${process.env.PLACE_ID || '<undefined>'}`);
+} catch {}
 
 const app = express();
 app.use(express.json());

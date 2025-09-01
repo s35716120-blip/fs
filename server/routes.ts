@@ -310,6 +310,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  // Quick sign-in endpoint for customers by name + phone
+  app.post('/api/auth/quick-signin', async (req: any, res) => {
+    try {
+      const { name, phone } = req.body || {};
+      if (!phone || typeof phone !== 'string') {
+        return res.status(400).json({ message: 'phone is required' });
+      }
+      // Basic rate limit by IP+phone (in-memory for now)
+      (global as any).__qs ||= new Map<string, { count: number; ts: number }>();
+      const key = `${req.ip}:${phone}`;
+      const entry = (global as any).__qs.get(key) || { count: 0, ts: Date.now() };
+      if (Date.now() - entry.ts < 60_000 && entry.count >= 5) {
+        return res.status(429).json({ message: 'Too many attempts. Try again later.' });
+      }
+      entry.count = (Date.now() - entry.ts > 60_000) ? 1 : entry.count + 1;
+      entry.ts = (Date.now() - entry.ts > 60_000) ? Date.now() : entry.ts;
+      (global as any).__qs.set(key, entry);
+
+      // Find bookings by phone
+      const bookings = await storage.getBookingsByPhoneNumber(phone);
+      if (!bookings?.length) {
+        return res.status(404).json({ message: 'No bookings found for this phone' });
+      }
+      // Minimal pseudo-user session keyed by phone
+      (req as any).session.user = {
+        claims: {
+          sub: `guest-${phone}`,
+          email: `${phone}@guest.local`,
+          first_name: name || 'Guest',
+          last_name: '',
+          profile_image_url: null,
+        },
+        access_token: 'guest-token'
+      };
+      res.json({ bookings });
+    } catch (e) {
+      console.error('quick-signin error', e);
+      res.status(500).json({ message: 'Failed to quick sign-in' });
+    }
+  });
+
   // Debug endpoint to check session
   app.get("/api/debug/session", async (req, res) => {
     const sessionUser = (req as any).session?.user;
@@ -321,6 +362,136 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sub: sessionUser.claims?.sub
       } : null
     });
+  });
+
+  // Example webhook receiver (external systems can POST here if configured)
+  app.post('/api/integrations/reviews-webhook', async (req, res) => {
+    try {
+      const { type, data } = req.body || {};
+      if (type === 'review.submitted' && data?.bookingId) {
+        await storage.updateBooking(data.bookingId, { reviewFlag: true, updatedAt: new Date().toISOString() });
+      }
+      res.json({ ok: true });
+    } catch (e) {
+      console.error('reviews webhook error', e);
+      res.status(500).json({ ok: false });
+    }
+  });
+
+  // Reviews API
+  app.get('/api/reviews/config', async (req, res) => {
+    try {
+      // prevent caches from serving stale null
+      res.set('Cache-Control', 'no-store');
+
+      // Support multiple env names for flexibility
+      const get = (k: string) => (process.env as any)?.[k];
+      let reviewOverride = get('REVIEW_OVERRIDE') || get('GOOGLE_REVIEW_URL') || get('REVIEW_URL') || undefined;
+      let placeId = get('PLACE_ID') || get('GOOGLE_PLACE_ID') || undefined;
+      console.log(`[reviews/config] env reviewOverride=${reviewOverride || '<undefined>'} placeId=${placeId || '<undefined>'}`);
+
+      // Fallback: read from .env using process.cwd() and dist-relative path
+      if (!reviewOverride && !placeId) {
+        try {
+          const { fileURLToPath } = await import('url');
+          const path = await import('path');
+          const fs = await import('fs');
+          const cwdEnv = path.resolve(process.cwd(), '.env');
+          const here = fileURLToPath(import.meta.url);
+          const hereDir = path.dirname(here);
+          const distEnv = path.resolve(hereDir, '..', '.env');
+          const candidates = [cwdEnv, distEnv];
+          console.log(`[reviews/config] probing .env candidates: ${candidates.join(', ')}`);
+          for (const p of candidates) {
+            if (fs.existsSync(p)) {
+              console.log(`[reviews/config] reading env from: ${p}`);
+              const content = await fs.promises.readFile(p, 'utf-8');
+              for (const line of content.split(/\r?\n/)) {
+                const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.+)\s*$/);
+                if (m) {
+                  const key = m[1];
+                  const val = m[2].replace(/^['\"]|['\"]$/g, '');
+                  if ((key === 'REVIEW_OVERRIDE' || key === 'GOOGLE_REVIEW_URL' || key === 'REVIEW_URL') && !reviewOverride) reviewOverride = val;
+                  if ((key === 'PLACE_ID' || key === 'GOOGLE_PLACE_ID') && !placeId) placeId = val;
+                }
+              }
+              if (reviewOverride || placeId) break;
+            }
+          }
+        } catch (e) {
+          console.log('[reviews/config] fallback .env read failed', e);
+        }
+      }
+
+      const reviewUrl = reviewOverride
+        ? reviewOverride
+        : placeId
+          ? `https://search.google.com/local/writereview?placeid=${encodeURIComponent(placeId)}`
+          : null;
+      console.log(`[reviews/config] resolved reviewUrl=${reviewUrl || '<null>'}`);
+      return res.json({ reviewUrl });
+    } catch (e) {
+      res.set('Cache-Control', 'no-store');
+      console.log('[reviews/config] error', e);
+      return res.json({ reviewUrl: null });
+    }
+  });
+
+  app.post('/api/reviews/request', async (req: any, res) => {
+    try {
+      const { bookingId } = req.body || {};
+      if (!bookingId) return res.status(400).json({ message: 'bookingId is required' });
+      const booking = await storage.getBookingById(bookingId);
+      if (!booking) return res.status(404).json({ message: 'Booking not found' });
+      const review = await storage.createReviewRequest({ bookingId, name: booking.customerName, phone: booking.phoneNumber });
+      const base = process.env.PUBLIC_BASE_URL || (req.protocol + '://' + req.get('host'));
+      const get = (k: string) => (process.env as any)?.[k];
+      const reviewOverride = get('REVIEW_OVERRIDE') || get('GOOGLE_REVIEW_URL') || get('REVIEW_URL') || undefined;
+      const placeId = get('PLACE_ID') || get('GOOGLE_PLACE_ID') || undefined;
+      const reviewUrl = reviewOverride
+        ? reviewOverride
+        : placeId
+          ? `https://search.google.com/local/writereview?placeid=${encodeURIComponent(placeId)}`
+          : `${base}/reviews?token=${encodeURIComponent(review.token)}`;
+      return res.json({ token: review.token, reviewUrl, review });
+    } catch (e) {
+      console.error('reviews/request error', e);
+      return res.status(500).json({ message: 'Failed to create review request' });
+    }
+  });
+
+  app.post('/api/reviews/confirm', async (req: any, res) => {
+    try {
+      const { token, note } = req.body || {};
+      if (!token) return res.status(400).json({ message: 'token is required' });
+      // Defensive: trim and strip wrapping quotes to avoid copy/paste artifacts
+      const t = String(token).trim().replace(/^['"]|['"]$/g, '');
+      const review = await storage.getReviewByToken(t);
+      if (!review) return res.status(404).json({ message: 'Invalid token' });
+      // Token expiry: 72 hours
+      const requestedAt = new Date(review.requestedAt || Date.now());
+      if (Date.now() - requestedAt.getTime() > 72 * 60 * 60 * 1000) {
+        return res.status(410).json({ message: 'Token expired' });
+      }
+      const updated = await storage.markReviewSubmitted(t, { note });
+      // Mark booking flag
+      if (review.bookingId) {
+        await storage.updateBooking(review.bookingId, { reviewFlag: true, updatedAt: new Date().toISOString() });
+      }
+      // Emit internal webhook/event
+      try {
+        console.log('event: review.submitted', { reviewId: updated?.id, bookingId: review.bookingId });
+        // Example webhook call (disabled by default)
+        const webhook = process.env.REVIEWS_WEBHOOK_URL;
+        if (webhook) {
+          fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'review.submitted', data: { reviewId: updated?.id, bookingId: review.bookingId } }) }).catch(() => {});
+        }
+      } catch {}
+      return res.json({ success: true });
+    } catch (e) {
+      console.error('reviews/confirm error', e);
+      return res.status(500).json({ message: 'Failed to confirm review' });
+    }
   });
 
   // Check auth status

@@ -27,6 +27,10 @@ import CustomerTicketsPage from "@/pages/customer-tickets";
 import AdminLeavePage from "@/pages/admin-leave";
 import NotificationsPage from "@/pages/notifications";
 import LeadInfoPage from "@/pages/lead-info";
+// Public pages
+import QuickSigninPage from "@/pages/quick-signin";
+import MyBookingsPage from "@/pages/my-bookings";
+import ReviewsPage from "@/pages/reviews";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -40,7 +44,14 @@ function Router() {
   }
 
   if (!isAuthenticated) {
-    return <LoginPage />;
+    return (
+      <Switch>
+        <Route path="/quick-signin" component={QuickSigninPage} />
+        <Route path="/my-bookings" component={MyBookingsPage} />
+        <Route path="/reviews" component={ReviewsPage} />
+        <Route component={LoginPage} />
+      </Switch>
+    );
   }
 
   return (

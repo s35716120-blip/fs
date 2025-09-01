@@ -101,7 +101,8 @@ export default function Dashboard() {
       const params = new URLSearchParams();
       params.set('startDate', monthRange.startDate);
       params.set('endDate', monthRange.endDate);
-      const res = await fetch(`/api/analytics/daily-revenue?${params.toString()}`);
+      const res = await fetch(`/api/analytics/daily-revenue?${params.toString()}`, { credentials: 'include' });
+      if (!res.ok) return [];
       return res.json();
     }
   });
@@ -112,7 +113,8 @@ export default function Dashboard() {
       const params = new URLSearchParams();
       params.set('startDate', monthRange.startDate);
       params.set('endDate', monthRange.endDate);
-      const res = await fetch(`/api/analytics/payment-methods?${params.toString()}`);
+      const res = await fetch(`/api/analytics/payment-methods?${params.toString()}`, { credentials: 'include' });
+      if (!res.ok) return { cash: 0, upi: 0 };
       return res.json();
     }
   });
@@ -123,13 +125,21 @@ export default function Dashboard() {
       const params = new URLSearchParams();
       params.set('startDate', monthRange.startDate);
       params.set('endDate', monthRange.endDate);
-      const res = await fetch(`/api/analytics/time-slots?${params.toString()}`);
+      const res = await fetch(`/api/analytics/time-slots?${params.toString()}`, { credentials: 'include' });
+      if (!res.ok) return [];
       return res.json();
     }
   });
 
   const { data: recentBookings, isLoading: isRecentBookingsLoading, error: recentBookingsError } = useQuery<any[]>({
-    queryKey: ["/api/bookings", "20"],
+    queryKey: ["/api/bookings", { page: 1, pageSize: 20 }],
+    queryFn: async ({ queryKey }) => {
+      const [, params] = queryKey as any;
+      const search = new URLSearchParams({ page: String(params.page), pageSize: String(params.pageSize) });
+      const res = await fetch(`/api/bookings?${search.toString()}`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to load recent bookings');
+      return res.json();
+    },
   });
 
   // Revenue progress query
@@ -245,11 +255,12 @@ export default function Dashboard() {
   }
 
   // Calculate selected month stats
-  const monthTotalRevenue = (dailyRevenue || []).reduce((sum: number, d: any) => sum + (Number(d.revenue) || 0), 0);
-  const monthTotalBookings = (dailyRevenue || []).reduce((sum: number, d: any) => sum + (Number(d.bookings) || 0), 0);
-  const monthRefundedCount = (dailyRevenue || []).reduce((sum: number, d: any) => sum + (Number(d.refunded) || 0), 0);
-  const firstHalf = (dailyRevenue || []).slice(0, Math.floor((dailyRevenue || []).length / 2));
-  const secondHalf = (dailyRevenue || []).slice(Math.floor((dailyRevenue || []).length / 2));
+  const safeDaily = Array.isArray(dailyRevenue) ? dailyRevenue : [];
+  const monthTotalRevenue = safeDaily.reduce((sum: number, d: any) => sum + (Number(d.revenue) || 0), 0);
+  const monthTotalBookings = safeDaily.reduce((sum: number, d: any) => sum + (Number(d.bookings) || 0), 0);
+  const monthRefundedCount = safeDaily.reduce((sum: number, d: any) => sum + (Number(d.refunded) || 0), 0);
+  const firstHalf = safeDaily.slice(0, Math.floor(safeDaily.length / 2));
+  const secondHalf = safeDaily.slice(Math.floor(safeDaily.length / 2));
 
   // Add goal target to daily revenue data for chart
   const dailyRevenueWithGoal = useMemo(() => {

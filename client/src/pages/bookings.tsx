@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Calendar, Users, IndianRupee, Search, X, Edit, Trash2, Phone, ChevronLeft, ChevronRight, Printer } from "lucide-react";
+import { ReviewModal } from '@/components/review-modal';
 
 export default function Bookings() {
   const { toast } = useToast();
@@ -25,6 +26,8 @@ export default function Bookings() {
   const [deletingBooking, setDeletingBooking] = useState<any>(null);
   const [deleteReason, setDeleteReason] = useState("");
   const [deleteComment, setDeleteComment] = useState("");
+  const [reviewBooking, setReviewBooking] = useState<any>(null);
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
@@ -626,6 +629,63 @@ export default function Bookings() {
                           </td>
                           <td className="py-4">
                             <div className="flex space-x-2">
+                              {!booking.reviewFlag && (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={async () => {
+                                      try {
+                                        const res = await fetch('/api/reviews/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingId: booking.id }) });
+                                        const data = await res.json();
+                                        if (!res.ok) throw new Error(data.message || 'Failed to create review link');
+                                        const base = window.location.origin;
+                                        const tokenLink = `${base}/reviews?token=${encodeURIComponent(data.token)}`;
+                                        await navigator.clipboard.writeText(tokenLink);
+                                        alert('Review link copied to clipboard.');
+                                      } catch (e: any) {
+                                        alert(e?.message || 'Failed to copy review link');
+                                      }
+                                    }}
+                                    className="border-sky-600/40 text-sky-300 hover:bg-sky-600/15 hover:text-sky-200 gap-2"
+                                    data-testid={`button-review-copy-${booking.id}`}
+                                  >
+                                    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor' className='w-4 h-4'><path d='M7.5 3.75A3.75 3.75 0 0 0 3.75 7.5v8.25a3.75 3.75 0 0 0 3.75 3.75h8.25a3.75 3.75 0 0 0 3.75-3.75V7.5a3.75 3.75 0 0 0-3.75-3.75H7.5Z'/><path d='M7.5 7.5A3.75 3.75 0 0 1 11.25 3.75H18a.75.75 0 0 1 0 1.5h-6.75A2.25 2.25 0 0 0 9 7.5V14.25a.75.75 0 0 1-1.5 0V7.5Z'/></svg>
+                                    Copy Review Link
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={async () => {
+                                      try {
+                                        const res = await fetch('/api/reviews/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingId: booking.id }) });
+                                        const data = await res.json();
+                                        if (!res.ok) throw new Error(data.message || 'Failed to create review link');
+                                        const base = window.location.origin;
+                                        const tokenLink = `${base}/reviews?token=${encodeURIComponent(data.token)}`;
+                                        const message = `Hi ${booking.customerName || ''}, please leave a review here: ${tokenLink}`.trim();
+                                        const phone = (booking.phoneNumber || '').replace(/\D/g, '');
+                                        const wa = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}` : `https://wa.me/?text=${encodeURIComponent(message)}`;
+                                        await navigator.clipboard.writeText(wa);
+                                        alert('WhatsApp link copied to clipboard. You can paste it in WhatsApp now.');
+                                      } catch (e: any) {
+                                        alert(e?.message || 'Failed to copy WhatsApp link');
+                                      }
+                                    }}
+                                    className="border-emerald-600/40 text-emerald-300 hover:bg-emerald-600/15 hover:text-emerald-200 gap-2"
+                                    data-testid={`button-review-wa-${booking.id}`}
+                                  >
+                                    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor' className='w-4 h-4'><path d='M12 2.25c-5.385 0-9.75 4.365-9.75 9.75 0 1.694.438 3.286 1.208 4.677L2.25 21.75l5.25-1.208A9.708 9.708 0 0 0 12 21.75c5.385 0 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25Zm4.19 13.352c-.213.6-1.253 1.14-1.75 1.197-.474.055-1.105.078-1.783-.109-.412-.111-.943-.304-1.626-.593-2.86-1.231-4.71-4.098-4.852-4.291-.141-.194-1.16-1.545-1.16-2.947 0-1.402.73-2.089.99-2.379.26-.29.566-.363.754-.363.188 0 .377.002.542.01.175.01.41-.066.642.49.213.529.727 1.832.792 1.964.065.132.108.289.02.464-.085.175-.129.289-.254.445-.129.152-.273.34-.39.457-.13.132-.265.274-.115.537.149.263.664 1.09 1.43 1.766.984.872 1.816 1.144 2.079 1.273.263.129.418.111.576-.066.158-.175.66-.77.837-1.035.175-.263.35-.219.586-.132.234.087 1.48.695 1.734.82.254.126.421.188.484.29.065.1.065.597-.148 1.197Z'/></svg>
+                                    Copy WhatsApp Link
+                                  </Button>
+                                </>
+                              )}
+                              {booking.reviewFlag && (
+                                <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border border-green-600/40 bg-green-500/10 text-green-300 shadow-sm">
+                                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12Zm13.36-1.814a.75.75 0 1 0-1.22-.872l-3.236 4.528L9.53 12.53a.75.75 0 0 0-1.06 1.06l2.25 2.25a.75.75 0 0 0 1.154-.114l3.736-5.54Z" clipRule="evenodd" /></svg>
+                                  Review submitted
+                                </span>
+                              )}
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -749,6 +809,21 @@ export default function Bookings() {
             setIsBookingModalOpen(false);
           }}
         />
+
+        {/* Review Modal */}
+        {reviewBooking && (
+          <ReviewModal
+            open={isReviewModalOpen}
+            onOpenChange={(v) => setIsReviewModalOpen(v)}
+            booking={reviewBooking}
+            onConfirmed={() => {
+              setIsReviewModalOpen(false);
+              setReviewBooking(null);
+              queryClient.invalidateQueries({ queryKey: ["/api/bookings"] });
+              refetch();
+            }}
+          />
+        )}
 
         {/* Edit Booking Modal */}
         <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>

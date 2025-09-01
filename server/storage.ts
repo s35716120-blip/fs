@@ -4,7 +4,7 @@ import { db } from "./db";
 import { 
   users, bookings, expenses, leaveApplications, activityLogs, 
   calendarEvents, salesReports, configurations, adSpends, dailyIncome, customerTickets, loginTracker,
-  leaveTypes, leaveBalances, notifications, feedbacks, followUps, refundRequests, leadInfos, revenueGoals
+  leaveTypes, leaveBalances, notifications, feedbacks, followUps, refundRequests, leadInfos, revenueGoals, reviews
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -177,6 +177,50 @@ export const storage = {
     return db.query.bookings.findFirst({
       where: eq(bookings.id, bookingId),
     });
+  },
+
+  // Reviews operations
+  async createReviewRequest({ bookingId, name, phone }: { bookingId: string; name?: string; phone?: string; }) {
+    const token = randomUUID();
+    const row = (await db.insert(reviews).values({ bookingId, name, phone, token, status: 'pending' }).returning())[0];
+    return row;
+  },
+
+  async getReviewByToken(token: string) {
+    // Tolerant lookup: trim, strip quotes, try exact, then case-insensitive
+    const raw = String(token || "");
+    const cleaned = raw.trim().replace(/^['\"]|['\"]$/g, '');
+    const exact = await db.query.reviews.findFirst({ where: eq(reviews.token, cleaned) });
+    if (exact) return exact;
+    const lower = cleaned.toLowerCase();
+    const row = await db.query.reviews.findFirst({
+      where: sql`lower(${reviews.token}) = ${lower}` as any,
+    });
+    return row || null;
+  },
+
+  async markReviewSubmitted(token: string, extras?: { note?: string }) {
+    const now = new Date().toISOString();
+    const update: any = { status: 'submitted', submittedAt: now };
+    if (extras?.note) update.note = extras.note;
+    const res = await db.update(reviews)
+      .set(update)
+      .where(eq(reviews.token, token))
+      .returning();
+    return res[0];
+  },
+
+  async verifyReviewByGmaps({ id, method, gmapsPlaceId, gmapsReviewId }: { id: string; method: 'gmaps'; gmapsPlaceId: string; gmapsReviewId: string; }) {
+    const now = new Date().toISOString();
+    const res = await db.update(reviews)
+      .set({ status: 'verified', verifiedAt: now, verificationMethod: method, gmapsPlaceId, gmapsReviewId })
+      .where(eq(reviews.id, id))
+      .returning();
+    return res[0];
+  },
+
+  async listReviewsByBooking(bookingId: string) {
+    return db.query.reviews.findMany({ where: eq(reviews.bookingId, bookingId), orderBy: [desc(reviews.requestedAt as any)] });
   },
 
   // Find a specific booking by phone number + date + time slot
