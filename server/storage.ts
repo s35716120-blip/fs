@@ -1,6 +1,6 @@
 import { sql, eq, desc, and, like, gte, lte, inArray, asc } from "drizzle-orm";
 import { InsertLeadInfo, insertLeadInfoSchema, InsertRevenueGoal, insertRevenueGoalSchema } from "@shared/schema";
-import { db } from "./db";
+import { db, execRaw } from "./db";
 import { 
   users, bookings, expenses, leaveApplications, activityLogs, 
   calendarEvents, salesReports, configurations, adSpends, dailyIncome, customerTickets, loginTracker,
@@ -254,8 +254,8 @@ export const storage = {
     ];
 
     try {
-      for (const sql of statements) {
-        await db.execute(sql as any);
+      for (const s of statements) {
+        execRaw(s);
       }
       return { ok: true };
     } catch (e) {
