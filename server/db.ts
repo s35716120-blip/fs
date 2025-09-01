@@ -6,6 +6,11 @@ import * as schema from "@shared/schema";
 const sqlite = new Database('rosae.db');
 export const db = drizzle(sqlite, { schema });
 
+// Allow controlled raw execution for maintenance tasks
+export function execRaw(sqlRaw: string) {
+  return sqlite.exec(sqlRaw);
+}
+
 // Initialize database tables
 export function initializeDatabase() {
   // SAFETY: do not drop tables in dev/prod; keep data. Only ensure schema.

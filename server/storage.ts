@@ -225,48 +225,43 @@ export const storage = {
 
   // Admin: clear all data except users and configurations
   async clearAllDataExceptUsersAndConfig() {
-    // Order matters due to FKs; delete children first
-    const tables = [
-      reviews,
-      refundRequests,
-      customerTickets,
-      feedbacks,
-      followUps,
-      calendarEvents,
-      salesReports,
-      dailyIncome,
-      expenses,
-      adSpends,
-      leadInfos,
-      revenueGoals,
-      notifications,
-      loginTracker,
-      leaveBalances,
-      leaveApplications,
-      leaveTypes,
-      activityLogs,
+    // Prefer raw SQL to ignore FK constraints if any and ensure full cleanup
+    // Note: SQLite in this project may not enforce FKs, but we handle order anyway.
+    const statements = [
+      // children first
+      "DELETE FROM reviews;",
+      "DELETE FROM refund_requests;",
+      "DELETE FROM customer_tickets;",
+      "DELETE FROM feedbacks;",
+      "DELETE FROM follow_ups;",
+      "DELETE FROM calendar_events;",
+      "DELETE FROM sales_reports;",
+      "DELETE FROM daily_income;",
+      "DELETE FROM expenses;",
+      "DELETE FROM ad_spends;",
+      "DELETE FROM lead_infos;",
+      "DELETE FROM revenue_goals;",
+      "DELETE FROM notifications;",
+      "DELETE FROM login_tracker;",
+      "DELETE FROM leave_balances;",
+      "DELETE FROM leave_applications;",
+      "DELETE FROM leave_types;",
+      "DELETE FROM activity_logs;",
       // bookings after dependents
-      bookings,
+      "DELETE FROM bookings;",
       // sessions last
-      sessions,
+      "DELETE FROM sessions;",
     ];
 
-    // Track counts (best-effort; SQLite run() doesn't return affected rows reliably in drizzle)
-    const results: Record<string, string> = {};
-
-    await db.transaction(async (tx) => {
-      for (const table of tables) {
-        try {
-          await tx.delete(table as any).run();
-          results[(table as any)._ as any || (table as any).name || 'table'] = 'ok';
-        } catch (e) {
-          results[(table as any)._ as any || (table as any).name || 'table'] = 'error';
-          console.error('clear table failed', (table as any).name || table, e);
-        }
+    try {
+      for (const sql of statements) {
+        await db.execute(sql as any);
       }
-    });
-
-    return { ok: true, results };
+      return { ok: true };
+    } catch (e) {
+      console.error('clearAllDataExceptUsersAndConfig failed', e);
+      return { ok: false, error: String(e) } as any;
+    }
   },
 
   // Find a specific booking by phone number + date + time slot
