@@ -378,6 +378,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Admin utility: clear all data except users and configurations
+  app.post('/api/admin/clear-data', async (req: any, res) => {
+    try {
+      const sessionUser = req.session?.user;
+      const email = sessionUser?.claims?.email as string | undefined;
+      if (!email || email !== 'admin@rosae.com') {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const result = await storage.clearAllDataExceptUsersAndConfig();
+      res.json(result);
+    } catch (e) {
+      console.error('clear-data error', e);
+      res.status(500).json({ message: 'Failed to clear data' });
+    }
+  });
+
   // Reviews API
   app.get('/api/reviews/config', async (req, res) => {
     try {

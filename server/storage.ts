@@ -223,6 +223,52 @@ export const storage = {
     return db.query.reviews.findMany({ where: eq(reviews.bookingId, bookingId), orderBy: [desc(reviews.requestedAt as any)] });
   },
 
+  // Admin: clear all data except users and configurations
+  async clearAllDataExceptUsersAndConfig() {
+    // Order matters due to FKs; delete children first
+    const tables = [
+      reviews,
+      refundRequests,
+      customerTickets,
+      feedbacks,
+      followUps,
+      calendarEvents,
+      salesReports,
+      dailyIncome,
+      expenses,
+      adSpends,
+      leadInfos,
+      revenueGoals,
+      notifications,
+      loginTracker,
+      leaveBalances,
+      leaveApplications,
+      leaveTypes,
+      activityLogs,
+      // bookings after dependents
+      bookings,
+      // sessions last
+      sessions,
+    ];
+
+    // Track counts (best-effort; SQLite run() doesn't return affected rows reliably in drizzle)
+    const results: Record<string, string> = {};
+
+    await db.transaction(async (tx) => {
+      for (const table of tables) {
+        try {
+          await tx.delete(table as any).run();
+          results[(table as any)._ as any || (table as any).name || 'table'] = 'ok';
+        } catch (e) {
+          results[(table as any)._ as any || (table as any).name || 'table'] = 'error';
+          console.error('clear table failed', (table as any).name || table, e);
+        }
+      }
+    });
+
+    return { ok: true, results };
+  },
+
   // Find a specific booking by phone number + date + time slot
   async getBookingByPhoneDateAndSlot(phoneNumber: string, bookingDate: string, timeSlot: string) {
     // Normalize inputs to be more tolerant (trim, case-insensitive)
