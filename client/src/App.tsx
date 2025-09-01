@@ -26,6 +26,7 @@ import NotFound from "@/pages/not-found";
 import CustomerTicketsPage from "@/pages/customer-tickets";
 import AdminLeavePage from "@/pages/admin-leave";
 import NotificationsPage from "@/pages/notifications";
+import LeadInfoPage from "@/pages/lead-info";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -62,6 +63,7 @@ function Router() {
       <Route path="/admin-settings" component={AdminSettings} />
       <Route path="/customer-tickets" component={CustomerTicketsPage} />
       <Route path="/notifications" component={NotificationsPage} />
+      <Route path="/lead-info" component={LeadInfoPage} />
       <Route path="/login-tracker" component={LoginTrackerPage} />
       <Route component={NotFound} />
     </Switch>

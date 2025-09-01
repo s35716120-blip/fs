@@ -352,7 +352,7 @@ export default function AdminSettings() {
                                   <FormLabel className="text-gray-300">Time Slot</FormLabel>
                                   <FormControl>
                                     <Input
-                                      placeholder="Enter time slot (e.g. 10:00 AM)"
+                                      placeholder="Enter time slot (e.g., 10:00 AM - 12:00 PM)"
                                       className="bg-gray-700 border-gray-600 text-white"
                                       {...field}
                                     />

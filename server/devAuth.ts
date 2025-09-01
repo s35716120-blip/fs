@@ -52,6 +52,7 @@ export async function setupDevAuth(app: Express) {
           first_name: adminUser.first_name,
           last_name: adminUser.last_name,
           profile_image_url: adminUser.profile_image_url,
+          role: adminUser.role, // Add role to claims
         },
         access_token: "dev-token",
         refresh_token: "dev-refresh",

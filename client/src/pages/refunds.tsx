@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, CheckCircle2, XCircle, IndianRupee, Phone, CalendarDays, Clock } from "lucide-react";
 
 export default function RefundsPage() {
@@ -22,6 +23,12 @@ export default function RefundsPage() {
   const [phone, setPhone] = useState("");
   const [date, setDate] = useState("");
   const [timeSlot, setTimeSlot] = useState("");
+
+  // Load time slots from config for dropdowns
+  const { data: config } = useQuery<any>({
+    queryKey: ["/api/config"],
+    staleTime: 5 * 60 * 1000,
+  });
 
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [refundAmount, setRefundAmount] = useState<string>("");
@@ -40,7 +47,7 @@ export default function RefundsPage() {
       const arr = Array.isArray(json) ? json : [];
       return arr
         .filter((b: any) => (date ? String(b.bookingDate).trim() === String(date).trim() : true))
-        .filter((b: any) => (timeSlot ? String(b.timeSlot).trim().toLowerCase() === String(timeSlot).trim().toLowerCase() : true))
+        .filter((b: any) => (timeSlot && timeSlot !== 'all' ? String(b.timeSlot).trim().toLowerCase() === String(timeSlot).trim().toLowerCase() : true))
         .sort((a: any, b: any) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
     }
   });
@@ -65,6 +72,8 @@ export default function RefundsPage() {
       toast({ title: "Refund approved" });
       queryClient.invalidateQueries({ queryKey: ["/api/refund-requests"] });
       queryClient.invalidateQueries({ queryKey: ["/api/bookings"] });
+      // Notify dashboard to refresh analytics
+      window.dispatchEvent(new CustomEvent('refunds:changed'));
     },
     onError: () => toast({ title: "Failed to approve", variant: "destructive" })
   });
@@ -75,6 +84,8 @@ export default function RefundsPage() {
       toast({ title: "Refund rejected" });
       queryClient.invalidateQueries({ queryKey: ["/api/refund-requests"] });
       queryClient.invalidateQueries({ queryKey: ["/api/bookings"] });
+      // Notify dashboard to refresh analytics
+      window.dispatchEvent(new CustomEvent('refunds:changed'));
     },
     onError: () => toast({ title: "Failed to reject", variant: "destructive" })
   });
@@ -141,10 +152,27 @@ export default function RefundsPage() {
               </div>
               <div>
                 <Label>Time Slot</Label>
-                <Input value={timeSlot} onChange={(e) => setTimeSlot(e.target.value)} placeholder="6:00 PM - 9:00 PM" />
+                <Select value={timeSlot} onValueChange={setTimeSlot}>
+                  <SelectTrigger className="bg-gray-800 border-gray-600">
+                    <SelectValue placeholder="All" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    {(config?.timeSlots || ['10:00 AM','1:00 PM','4:00 PM','7:00 PM']).map((slot: string) => (
+                      <SelectItem key={slot} value={slot}>{slot}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-              <div className="flex items-end">
+              <div className="flex items-end gap-2">
                 <Button onClick={onSearch} disabled={searching}> <Search className="w-4 h-4 mr-2"/> Search</Button>
+                <Button
+                  variant="outline"
+                  onClick={() => { setPhone(''); setDate(''); setTimeSlot(''); setSelectedBooking(null); }}
+                  className="border-gray-600"
+                >
+                  <XCircle className="w-4 h-4 mr-1"/> Clear
+                </Button>
               </div>
             </div>
 

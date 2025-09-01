@@ -3,6 +3,8 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { BookingModal } from "./booking-modal";
 import { Bell, Ticket } from "lucide-react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 
 const pageMetadata = {
   "/": {
@@ -28,12 +30,26 @@ const pageMetadata = {
   "/user-management": {
     title: "User Management",
     description: "Manage users and their access permissions"
+  },
+  "/lead-info": {
+    title: "Lead Info",
+    description: "Record shifts and analyze lead quality & calls"
   }
 };
 
 export default function Header() {
   const [location] = useLocation();
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
+
+  const { data: notifications } = useQuery<any[]>({ queryKey: ["/api/notifications"] });
+  const unreadCount = (notifications || []).filter(n => !n.isRead).length;
+  const markAllRead = useMutation({
+    mutationFn: async () => {
+      for (const n of notifications || []) {
+        if (!n.isRead) await apiRequest("PATCH", `/api/notifications/${n.id}/read`, { isRead: true });
+      }
+    }
+  });
 
   const currentPage = pageMetadata[location as keyof typeof pageMetadata] || pageMetadata["/"];
 
@@ -62,11 +78,15 @@ export default function Header() {
               <button 
                 className="relative p-2 text-gray-400 hover:text-white transition-colors"
                 data-testid="button-notifications"
+                onClick={() => markAllRead.mutate()}
+                title="Mark all notifications as read"
               >
                 <Bell className="w-5 h-5" />
-                <span className="absolute -top-1 -right-1 bg-rosae-red text-xs rounded-full w-5 h-5 flex items-center justify-center text-white">
-                  3
-                </span>
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-rosae-red text-xs rounded-full min-w-[20px] h-5 px-1 flex items-center justify-center text-white">
+                    {unreadCount}
+                  </span>
+                )}
               </button>
 
             </div>

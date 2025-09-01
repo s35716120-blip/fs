@@ -4,7 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Sidebar } from "@/components/sidebar";
+import { Layout } from "@/components/layout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -212,16 +212,26 @@ export default function Expenses() {
       expenseDate: data.expenseDate,
       creatorName: data.creatorName,
     };
-    // Optional paid via
-    const via = data.paidVia;
-    const cash = data.paidCash ? parseFloat(data.paidCash) : undefined;
-    const upi = data.paidUpi ? parseFloat(data.paidUpi) : undefined;
-    if (via === 'cash' && typeof cash === 'number') expenseData.paidCash = cash;
-    if (via === 'upi' && typeof upi === 'number') expenseData.paidUpi = upi;
-    if (via === 'both') {
-      if (typeof cash === 'number') expenseData.paidCash = cash;
-      if (typeof upi === 'number') expenseData.paidUpi = upi;
+    
+    // Optional paid via — record zero when a method is selected but amount left blank
+    const via = data.paidVia as string;
+    const cash = data.paidCash === '' || data.paidCash === undefined ? 0 : parseFloat(data.paidCash);
+    const upi = data.paidUpi === '' || data.paidUpi === undefined ? 0 : parseFloat(data.paidUpi);
+
+    // Set payment fields based on selection.
+    // Do NOT send null for the unselected method to avoid it being coerced to 0 on the server.
+    if (via === 'cash') {
+      expenseData.paidCash = isNaN(cash) ? 0 : cash;
+      expenseData.paidVia = 'cash';
+    } else if (via === 'upi') {
+      expenseData.paidUpi = isNaN(upi) ? 0 : upi;
+      expenseData.paidVia = 'upi';
+    } else if (via === 'both') {
+      expenseData.paidCash = isNaN(cash) ? 0 : cash;
+      expenseData.paidUpi = isNaN(upi) ? 0 : upi;
+      expenseData.paidVia = 'both';
     }
+    // If no payment method selected, leave both fields undefined
     
     createExpenseMutation.mutate(expenseData);
   };
@@ -363,12 +373,20 @@ export default function Expenses() {
   };
 
   // Helper: derive display label for paid method from optional fields
+  // Show label if fields are present, even when amount is 0 (user selected a method but left amount blank)
   const getPaidViaLabel = (expense: any) => {
-    const cash = Number(expense.paidCash || 0);
-    const upi = Number(expense.paidUpi || 0);
-    if (cash > 0 && upi > 0) return 'U&C';
-    if (cash > 0) return 'Cash';
-    if (upi > 0) return 'UPI';
+    // Prefer explicit field if available
+    if (expense.paidVia) {
+      if (expense.paidVia === 'both') return 'U&C';
+      if (expense.paidVia === 'cash') return 'Cash';
+      if (expense.paidVia === 'upi') return 'UPI';
+    }
+    // Fallback to inference from amounts
+    const hasCash = expense.paidCash !== undefined && expense.paidCash !== null;
+    const hasUpi = expense.paidUpi !== undefined && expense.paidUpi !== null;
+    if (hasCash && hasUpi) return 'U&C';
+    if (hasCash) return 'Cash';
+    if (hasUpi) return 'UPI';
     return '-';
   };
 
@@ -423,12 +441,11 @@ export default function Expenses() {
     }
 
     if (paidViaFilter) {
-      const label = getPaidViaLabel(expense);
-      // Match selected filter: 'cash', 'upi', or 'both' (U&C)
+      const label = expense.paidVia || getPaidViaLabel(expense).toLowerCase();
       if (paidViaFilter === 'both') {
-        if (label !== 'U&C') return false;
+        if (!(label === 'both' || label === 'u&c')) return false;
       } else {
-        if (label.toLowerCase() !== paidViaFilter) return false;
+        if (label !== paidViaFilter) return false;
       }
     }
 
@@ -454,41 +471,40 @@ export default function Expenses() {
   }, {});
 
   return (
-    <div className="flex min-h-screen bg-rosae-black">
-      <Sidebar />
-      <div className="flex-1">
-        <div className="p-6">
-          <div className="flex items-start justify-between mb-6">
-            <div>
-              <h2 className="text-2xl font-bold text-white" data-testid="text-page-title">Expense Management</h2>
-              <p className="text-gray-400 text-sm">Track and manage all business expenses</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <Button
-                variant="outline"
-                className="border-gray-600 text-gray-300 hover:bg-gray-700"
-                onClick={() => handleExport()}
-                data-testid="button-export"
-              >
-                <Download className="mr-2 w-4 h-4" />
-                Export CSV
-              </Button>
-              <Button
-                variant="outline"
-                className="border-gray-600 text-gray-300 hover:bg-gray-700"
-                onClick={handlePrint}
-                data-testid="button-print"
-              >
-                <Printer className="mr-2 w-4 h-4" />
-                Print
-              </Button>
-              <Dialog open={isExpenseModalOpen} onOpenChange={setIsExpenseModalOpen}>
-                <DialogTrigger asChild>
-                  <Button className="bg-rosae-red hover:bg-rosae-dark-red px-6 py-2" data-testid="button-new-expense">
-                    <Plus className="mr-2 w-4 h-4" />
-                    New Expense
-                  </Button>
-                </DialogTrigger>
+    <Layout>
+      <div className="p-6">
+        {/* Header bar - match layout style */}
+        <div className="flex items-center justify-between mb-6 bg-rosae-dark-gray border border-gray-700 rounded-lg px-4 py-3">
+          <div>
+            <h2 className="text-2xl font-bold text-white" data-testid="text-page-title">Expense Management</h2>
+            <p className="text-gray-400 text-sm">Track and manage all business expenses</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button
+              variant="outline"
+              className="border-gray-600 text-gray-300 hover:bg-gray-700"
+              onClick={() => handleExport()}
+              data-testid="button-export"
+            >
+              <Download className="mr-2 w-4 h-4" />
+              Export CSV
+            </Button>
+            <Button
+              variant="outline"
+              className="border-gray-600 text-gray-300 hover:bg-gray-700"
+              onClick={handlePrint}
+              data-testid="button-print"
+            >
+              <Printer className="mr-2 w-4 h-4" />
+              Print
+            </Button>
+            <Dialog open={isExpenseModalOpen} onOpenChange={setIsExpenseModalOpen}>
+              <DialogTrigger asChild>
+                <Button className="bg-rosae-red hover:bg-rosae-dark-red px-6 py-2" data-testid="button-new-expense">
+                  <Plus className="mr-2 w-4 h-4" />
+                  New Expense
+                </Button>
+              </DialogTrigger>
                 <DialogContent className="bg-rosae-dark-gray border-gray-600 text-white sm:max-w-[560px] rounded-xl">
                   <DialogHeader>
                     <DialogTitle className="text-xl font-semibold text-white">Add New Expense</DialogTitle>
@@ -648,6 +664,9 @@ export default function Expenses() {
                           />
                         )}
                       </div>
+                      {/* Ensure we persist paidVia explicitly for listing */}
+                      <input type="hidden" value={form.watch('paidVia') || ''} readOnly />
+
                       <FormField
                         control={form.control}
                         name="description"
@@ -690,12 +709,12 @@ export default function Expenses() {
                   </Form>
                 </DialogContent>
               </Dialog>
-            </div>
           </div>
+        </div>
 
-          {/* Filters card */}
-          <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 mb-6">
-            <div className="flex flex-wrap gap-4 items-end">
+        {/* Filters card */}
+        <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 mb-6">
+          <div className="flex flex-wrap gap-4 items-end">
               <div className="w-48">
                 <Label className="text-gray-300 mb-1 block">Category</Label>
                 <Select
@@ -786,8 +805,8 @@ export default function Expenses() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <Card className="bg-gradient-to-br from-gray-800 to-gray-900 border-gray-700 shadow-md">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <Card className="bg-gradient-to-br from-gray-800 to-gray-900 border-gray-700 shadow-md">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -834,10 +853,10 @@ export default function Expenses() {
                 </div>
               </CardContent>
             </Card>
-          </div>
+        </div>
 
-          <Card className="bg-rosae-dark-gray border-gray-600">
-            <CardContent className="p-6">
+        <Card className="bg-rosae-dark-gray border-gray-600">
+          <CardContent className="p-6">
               <div className="flex justify-between items-center mb-6">
                 <h3 className="text-xl font-semibold text-white" data-testid="text-expenses-list-title">All Expenses</h3>
                 {(selectedCategory || selectedCreator || dateRange.startDate || dateRange.endDate) && (
@@ -965,8 +984,7 @@ export default function Expenses() {
               )}
             </CardContent>
           </Card>
-        </div>
       </div>
-    </div>
+    </Layout>
   );
 }

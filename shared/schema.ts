@@ -34,6 +34,7 @@ export const users = sqliteTable("users", {
   profileImageUrl: text("profile_image_url"),
   passwordHash: text("password_hash"),
   role: text("role").default("employee"),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
   updatedAt: text("updated_at").default(sql`(CURRENT_TIMESTAMP)`),
 });
@@ -93,6 +94,8 @@ export const expenses = sqliteTable("expenses", {
   // Optional payment breakdown
   paidCash: real("paid_cash"),
   paidUpi: real("paid_upi"),
+  // Explicit paid method label: 'cash' | 'upi' | 'both'
+  paidVia: text("paid_via"),
   // Name entered in the form for who created this expense
   creatorName: text("creator_name"),
   // Authenticated user id who saved the expense
@@ -258,6 +261,21 @@ export const salesReports = sqliteTable("sales_reports", {
   createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
 });
 
+// Revenue Goals (monthly)
+export const revenueGoals = sqliteTable("revenue_goals", {
+  id: text("id").primaryKey().default(
+    sql`(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
+         substr(hex(randomblob(2)),2) || '-' ||
+         substr('89ab',abs(random()) % 4 + 1, 1) ||
+         substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))`
+  ),
+  month: text("month").notNull(), // YYYY-MM
+  goalAmount: integer("goal_amount").notNull(),
+  createdBy: text("created_by").references(() => users.id),
+  createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
+  updatedAt: text("updated_at").default(sql`(CURRENT_TIMESTAMP)`),
+});
+
 // Daily Income
 export const dailyIncome = sqliteTable("daily_income", {
   id: text("id").primaryKey().default(
@@ -296,6 +314,38 @@ export const customerTickets = sqliteTable("customer_tickets", {
   createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
   updatedAt: text("updated_at").default(sql`(CURRENT_TIMESTAMP)`),
   deletedAt: text("deleted_at"),
+});
+
+// Lead Info (daily shift-based lead tracking)
+export const leadInfos = sqliteTable("lead_infos", {
+  id: text("id").primaryKey().default(
+    sql`(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))`
+  ),
+  date: text("date").notNull(), // YYYY-MM-DD
+  shift: text("shift").notNull(), // 'morning' | 'evening'
+  source: text("source").notNull(), // Instagram | Facebook | Website | GMaps | Others
+  totalLeads: integer("total_leads").notNull().default(0),
+  goodLeads: integer("good_leads").notNull().default(0),
+  badLeads: integer("bad_leads").notNull().default(0),
+  callsMade: integer("calls_made").notNull().default(0),
+  description: text("description"),
+  createdBy: text("created_by").references(() => users.id),
+  createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
+});
+
+export const insertLeadInfoSchema = createInsertSchema(leadInfos).omit({
+  id: true,
+  createdAt: true,
+  createdBy: true,
+}).extend({
+  date: z.string().min(1),
+  shift: z.enum(["morning", "evening"]),
+  source: z.enum(["Instagram", "Facebook", "Website", "GMaps", "Others"]),
+  totalLeads: z.coerce.number().min(0),
+  goodLeads: z.coerce.number().min(0),
+  badLeads: z.coerce.number().min(0),
+  callsMade: z.coerce.number().min(0),
+  description: z.string().optional(),
 });
 
 // Feedbacks
@@ -421,6 +471,7 @@ export const insertExpenseSchema = createInsertSchema(expenses).omit({
   creatorName: z.string().optional(),
   paidCash: z.coerce.number().optional(),
   paidUpi: z.coerce.number().optional(),
+  paidVia: z.enum(['cash','upi','both']).optional(),
 });
 
 // Ad Spend insert schema
@@ -520,6 +571,16 @@ export const insertCustomerTicketSchema = createInsertSchema(customerTickets).om
   createdBy: true,
 });
 
+export const insertRevenueGoalSchema = createInsertSchema(revenueGoals).omit({
+  id: true,
+  createdBy: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  month: z.string().regex(/^\d{4}-\d{2}$/, "Month must be in YYYY-MM format"),
+  goalAmount: z.coerce.number().min(1, "Goal amount must be greater than 0"),
+});
+
 /* ---------------- TYPES ---------------- */
 export type UpsertUser = z.infer<typeof upsertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -527,6 +588,8 @@ export type InsertBooking = z.infer<typeof insertBookingSchema>;
 export type Booking = typeof bookings.$inferSelect;
 export type InsertExpense = z.infer<typeof insertExpenseSchema>;
 export type Expense = typeof expenses.$inferSelect;
+export type InsertLeadInfo = z.infer<typeof insertLeadInfoSchema>;
+export type LeadInfo = typeof leadInfos.$inferSelect;
 export type InsertAdSpend = z.infer<typeof insertAdSpendSchema>;
 export type AdSpend = typeof adSpends.$inferSelect;
 export type InsertConfiguration = z.infer<typeof insertConfigurationSchema>;
@@ -545,4 +608,6 @@ export type InsertDailyIncome = z.infer<typeof insertDailyIncomeSchema>;
 export type DailyIncome = typeof dailyIncome.$inferSelect;
 export type InsertCustomerTicket = z.infer<typeof insertCustomerTicketSchema>;
 export type CustomerTicket = typeof customerTickets.$inferSelect;
+export type InsertRevenueGoal = z.infer<typeof insertRevenueGoalSchema>;
+export type RevenueGoal = typeof revenueGoals.$inferSelect;
 export type RefundRequest = typeof refundRequests.$inferSelect;

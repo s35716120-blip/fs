@@ -35,6 +35,7 @@ const navigationItems = [
   { name: "Daily Income", href: "/daily-income", icon: IndianRupee },
   { name: "Feedback Management", href: "/feedback-management", icon: Calendar },
   { name: "Follow-ups", href: "/follow-ups", icon: CalendarDays },
+  { name: "LeadInfo", href: "/lead-info", icon: CalendarDays },
   { name: "Customer Tickets", href: "/customer-tickets", icon: Ticket },
   { name: "Refunds", href: "/refunds", icon: Wallet },
   { name: "Leave Management", href: "/leave-management", icon: Calendar },
@@ -108,15 +109,13 @@ export function Sidebar() {
         {/* Logo Section */}
         <div className="p-6 border-b border-gray-600">
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-rosae-red rounded-lg flex items-center justify-center">
-                <Theater className="text-white text-xl" data-testid="icon-logo" />
+            <a href="/" className="flex items-center space-x-3 group" title="Go to Dashboard">
+              <img src="/rosae-logo.jpg" alt="ROSAE logo" className="w-10 h-10 object-contain rounded shadow-md ring-1 ring-rosae-red/40 group-hover:ring-rosae-red/70 transition" />
+              <div className="leading-tight">
+                <h1 className="text-xl font-extrabold tracking-wide text-white group-hover:text-rosae-red transition-colors" data-testid="text-brand-name">ROSAE</h1>
+                <p className="text-gray-400 text-xs">Theatre Management</p>
               </div>
-              <div>
-                <h1 className="text-xl font-bold text-white" data-testid="text-brand-name">ROSAE</h1>
-                <p className="text-gray-400 text-sm">Theatre Management</p>
-              </div>
-            </div>
+            </a>
             <button
               onClick={close}
               className="lg:hidden text-gray-400 hover:text-white transition-colors"

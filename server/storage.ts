@@ -1,12 +1,25 @@
-import { sql, eq, desc, and, like, gte, lte, inArray } from "drizzle-orm";
+import { sql, eq, desc, and, like, gte, lte, inArray, asc } from "drizzle-orm";
+import { InsertLeadInfo, insertLeadInfoSchema, InsertRevenueGoal, insertRevenueGoalSchema } from "@shared/schema";
 import { db } from "./db";
 import { 
   users, bookings, expenses, leaveApplications, activityLogs, 
   calendarEvents, salesReports, configurations, adSpends, dailyIncome, customerTickets, loginTracker,
-  leaveTypes, leaveBalances, notifications, feedbacks, followUps, refundRequests
+  leaveTypes, leaveBalances, notifications, feedbacks, followUps, refundRequests, leadInfos, revenueGoals
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
+
+function toCSV(rows: any[], headers: string[], mapper: (r: any) => string[]): string {
+  const header = headers.join(",") + "\n";
+  const body = rows.map(r => mapper(r).map(v => {
+    const s = String(v ?? "");
+    if (s.includes(",") || s.includes("\n") || s.includes("\"")) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }).join(",")).join("\n");
+  return header + body;
+}
 
 // Create a storage interface for database operations
 export const storage = {
@@ -29,12 +42,21 @@ export const storage = {
     });
   },
   
-  async getAllUsers() {
-    return db.query.users.findMany({
-      orderBy: (users, { asc }) => [asc(users.firstName)],
-    });
+  async listUsers(params: { page?: number; pageSize?: number; email?: string; role?: string; active?: boolean }) {
+    const page = params.page ?? 1;
+    const pageSize = params.pageSize ?? 20;
+    const offset = (page - 1) * pageSize;
+    const filters: any[] = [];
+    if (params.email) filters.push(like(users.email, `%${params.email}%`));
+    if (params.role) filters.push(eq(users.role, params.role));
+    if (typeof params.active === 'boolean') filters.push(eq(users.active as any, params.active));
+    const whereClause = filters.length ? and(...filters) : undefined;
+    const rows = await db.query.users.findMany({ where: whereClause, orderBy: [asc(users.firstName)], limit: pageSize, offset });
+    const count = await db.select({ count: sql`COUNT(*)` }).from(users).where(whereClause);
+    const total = Number(count?.[0]?.count || 0);
+    return { rows, pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) } };
   },
-  
+
   async createUser(userData: { email: string; password: string; firstName: string; lastName: string; role?: string }) {
     const passwordHash = await bcrypt.hash(userData.password, 10);
     const user = {
@@ -42,7 +64,8 @@ export const storage = {
       firstName: userData.firstName,
       lastName: userData.lastName,
       passwordHash,
-      role: userData.role || 'employee'
+      role: userData.role || 'employee',
+      active: true,
     };
     const result = await db.insert(users).values(user).returning();
     return result[0];
@@ -66,6 +89,14 @@ export const storage = {
     }
   },
 
+  async updateUser(userId: string, update: Partial<{ email: string; firstName: string; lastName: string; role: string; active: boolean }>) {
+    const res = await db.update(users)
+      .set({ ...update, updatedAt: sql`(CURRENT_TIMESTAMP)` })
+      .where(eq(users.id, userId))
+      .returning();
+    return res[0];
+  },
+
   async updateUserRole(userId: string, role: string) {
     const result = await db.update(users)
       .set({ role })
@@ -74,8 +105,10 @@ export const storage = {
     return result[0];
   },
 
-  async deleteUser(userId: string) {
-    await db.delete(users).where(eq(users.id, userId));
+  async deactivateUser(userId: string) {
+    await db.update(users)
+      .set({ active: false, updatedAt: sql`(CURRENT_TIMESTAMP)` })
+      .where(eq(users.id, userId));
   },
   
   // Booking operations
@@ -537,6 +570,87 @@ export const storage = {
       orderBy: [desc(expenses.createdAt)],
       limit: limit
     });
+  },
+
+  // Lead Info operations
+  async createLeadInfo(data: any) {
+    // Enforce one entry per user per date per shift
+    const existing = await db.query.leadInfos.findFirst({
+      where: (leadInfos, { and, eq }) => and(
+        eq(leadInfos.date as any, data.date),
+        eq(leadInfos.shift as any, data.shift),
+        eq(leadInfos.createdBy as any, data.createdBy)
+      )
+    });
+    if (existing) return existing;
+    const res = await db.insert(leadInfos).values(data).returning();
+    return res[0];
+  },
+
+  async listLeadInfos(filters?: { startDate?: string; endDate?: string; source?: string }) {
+    const whereParts: any[] = [];
+    if (filters?.startDate) whereParts.push(gte(leadInfos.date as any, filters.startDate));
+    if (filters?.endDate) whereParts.push(lte(leadInfos.date as any, filters.endDate));
+    if (filters?.source) whereParts.push(eq(leadInfos.source as any, filters.source));
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+    return db.query.leadInfos.findMany({ where: whereClause, orderBy: [desc(leadInfos.date as any), desc(leadInfos.createdAt as any)] });
+  },
+
+  async getLeadStats(filters?: { startDate?: string; endDate?: string }) {
+    const rows = await this.listLeadInfos(filters);
+    // Aggregate simple totals and per-day breakdown for charts
+    const total = { totalLeads: 0, goodLeads: 0, badLeads: 0, callsMade: 0 } as any;
+    const byDate = new Map<string, { totalLeads: number; goodLeads: number; badLeads: number; callsMade: number }>();
+    for (const r of rows as any[]) {
+      total.totalLeads += Number(r.totalLeads || 0);
+      total.goodLeads += Number(r.goodLeads || 0);
+      total.badLeads += Number(r.badLeads || 0);
+      total.callsMade += Number(r.callsMade || 0);
+      const d = r.date as string;
+      const curr = byDate.get(d) || { totalLeads: 0, goodLeads: 0, badLeads: 0, callsMade: 0 };
+      curr.totalLeads += Number(r.totalLeads || 0);
+      curr.goodLeads += Number(r.goodLeads || 0);
+      curr.badLeads += Number(r.badLeads || 0);
+      curr.callsMade += Number(r.callsMade || 0);
+      byDate.set(d, curr);
+    }
+    const series = Array.from(byDate.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([date, v]) => ({ date, ...v }));
+    return { total, series };
+  },
+
+  async createLeadNotificationsIfMissing(referenceDateISO: string) {
+    // Check if any lead info exists for that date; notify all users otherwise
+    const date = referenceDateISO;
+    const rows = await db.query.leadInfos.findMany({ where: eq(leadInfos.date as any, date) });
+    if (rows.length > 0) return { notified: 0 };
+    const allUsers = await this.getAllUsers();
+    let notified = 0;
+    for (const u of allUsers as any[]) {
+      try {
+        await this.createNotification({ userId: u.id, title: `Missing lead info for ${date}`, body: 'Please submit morning/evening lead info', type: 'lead_info' });
+        notified++;
+      } catch {}
+    }
+    return { notified };
+  },
+
+  async exportLeadInfosCSV(filters?: { startDate?: string; endDate?: string; source?: string }) {
+    const rows = await this.listLeadInfos(filters);
+    const headers = ['Date','Shift','Source','Total Leads','Good Leads','Bad Leads','Calls Made','Description','Created By','Created At'];
+    const escape = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const csv = [headers.join(',')].concat((rows as any[]).map((r) => [
+      r.date,
+      r.shift,
+      r.source,
+      r.totalLeads ?? 0,
+      r.goodLeads ?? 0,
+      r.badLeads ?? 0,
+      r.callsMade ?? 0,
+      r.description ?? '',
+      r.createdBy ?? '',
+      r.createdAt ?? '',
+    ].map(escape).join(','))).join('\n');
+    return csv;
   },
 
   async getExpensesByCategory(category: string) {
@@ -1127,6 +1241,57 @@ export const storage = {
     await db.delete(calendarEvents).where(eq(calendarEvents.id, eventId));
   },
   
+  // Login tracker operations
+  async logLogin(data: { userId: string; email?: string | null; deviceType?: string | null; userAgent?: string | null; ipAddress?: string | null }) {
+    const row = (await db.insert(loginTracker).values({
+      userId: data.userId,
+      email: data.email ?? null,
+      loginTime: new Date().toISOString(),
+      deviceType: data.deviceType ?? null,
+      userAgent: data.userAgent ?? null,
+      ipAddress: data.ipAddress ?? null,
+    }).returning())[0];
+    return row;
+  },
+
+  async logLogout(userId: string) {
+    // Find most recent login with no logout
+    const open = await db.query.loginTracker.findMany({
+      where: eq(loginTracker.userId, userId),
+      orderBy: [desc(loginTracker.loginTime)],
+      limit: 1,
+    });
+    const last = open?.[0];
+    if (!last || (last as any).logoutTime) return null;
+    const logoutTime = new Date().toISOString();
+    const sessionDurationSec = Math.max(0, Math.floor((new Date(logoutTime).getTime() - new Date((last as any).loginTime).getTime()) / 1000));
+    const updated = await db.update(loginTracker)
+      .set({ logoutTime, sessionDurationSec })
+      .where(eq(loginTracker.id, (last as any).id))
+      .returning();
+    return updated[0];
+  },
+
+  async listLogins(params: { startDate?: string; endDate?: string; userId?: string; email?: string; page?: number; pageSize?: number }) {
+    const page = params.page ?? 1;
+    const pageSize = params.pageSize ?? 20;
+    const offset = (page - 1) * pageSize;
+
+    const filters: any[] = [];
+    if (params.startDate) filters.push(gte(loginTracker.loginTime as any, params.startDate));
+    if (params.endDate) filters.push(lte(loginTracker.loginTime as any, params.endDate));
+    if (params.userId) filters.push(eq(loginTracker.userId, params.userId));
+    if (params.email) filters.push(like(loginTracker.email, `%${params.email}%`));
+    const whereClause = filters.length ? and(...filters) : undefined;
+
+    const rows = await db.query.loginTracker.findMany({ where: whereClause, orderBy: [desc(loginTracker.loginTime)], limit: pageSize, offset });
+
+    const count = await db.select({ count: sql`COUNT(*)` }).from(loginTracker).where(whereClause);
+    const total = Number(count?.[0]?.count || 0);
+
+    return { rows, pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) } };
+  },
+
   // Activity log operations
   async logActivity(userId: string, action: string, resourceType: string, resourceId: string, details: string) {
     return db.insert(activityLogs).values({
@@ -1139,53 +1304,63 @@ export const storage = {
   },
   
   // Analytics operations
-  async getDailyRevenue(days: number = 7) {
-    // Helper to compute net amounts after approved refunds
+  async getDailyRevenue(daysOrFilters: number | { startDate?: string; endDate?: string } = 7) {
+    // Helper to compute net amounts, full-refund flag, and refund amount
     const computeNet = (b: any) => {
       const total = Number(b.totalAmount || 0);
-      const cash = Number(b.cashAmount || 0);
-      const upi = Number(b.upiAmount || 0);
       const isRefunded = (b.refundStatus === 'approved');
       const refund = isRefunded ? Math.max(0, Math.min(Number(b.refundAmount || 0), total)) : 0;
-      // Proportionally split refund across payment methods based on original split
-      let netTotal = Math.max(0, total - refund);
-      if (total > 0 && refund > 0) {
-        const cashShare = cash / total;
-        const upiShare = upi / total;
-        // We only need netTotal for this function
-        return { netTotal };
-      }
-      return { netTotal };
+      const netTotal = Math.max(0, total - refund);
+      const isFullRefund = total > 0 ? (refund >= total - 0.01) : false;
+      return { netTotal, isFullRefund, refund };
     };
 
-    // Get today's date
-    const today = new Date();
-    const result = [] as any[];
+    const result: any[] = [];
 
-    for (let i = 0; i < days; i++) {
-      const date = new Date(today);
-      date.setDate(today.getDate() - i);
-      const dateString = date.toISOString().split('T')[0];
+    // Utilities for safe YYYY-MM-DD iteration without timezone pitfalls
+    const toYMD = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const addDaysYmd = (ymd: string, days: number) => {
+      const [y,m,day] = ymd.split('-').map(Number);
+      const d = new Date(y, (m - 1), day);
+      d.setDate(d.getDate() + days);
+      return toYMD(d);
+    };
 
-      // Query bookings for this date
-      const dailyBookings = await db.query.bookings.findMany({
-        where: eq(bookings.bookingDate, dateString)
-      });
+    // Determine date range
+    let startStr: string;
+    let endStr: string;
+    if (typeof daysOrFilters === 'object') {
+      const { startDate, endDate } = daysOrFilters || {};
+      const today = toYMD(new Date());
+      startStr = (startDate && String(startDate)) || today;
+      endStr = (endDate && String(endDate)) || today;
+    } else {
+      const days = daysOrFilters as number;
+      const today = toYMD(new Date());
+      endStr = today;
+      // build start by subtracting days-1
+      startStr = addDaysYmd(today, -(days - 1));
+    }
 
-      // Calculate net revenue and booking count
-      const revenue = dailyBookings.reduce((sum, b) => sum + computeNet(b).netTotal, 0);
-
-      result.push({
-        date: dateString,
-        revenue,
-        bookings: dailyBookings.length
-      });
+    // Iterate inclusive range
+    let cursor = startStr;
+    while (cursor <= endStr) {
+      const dailyBookings = await db.query.bookings.findMany({ where: eq(bookings.bookingDate, cursor) });
+      const revenue = dailyBookings.reduce((sum, b) => {
+        const { netTotal } = computeNet(b);
+        return sum + netTotal;
+      }, 0);
+      const nonRefundedCount = dailyBookings.reduce((count, b) => count + (computeNet(b).isFullRefund ? 0 : 1), 0);
+      const refundedCount = dailyBookings.reduce((count, b) => count + ((b.refundStatus === 'approved' && Number(b.refundAmount || 0) > 0) ? 1 : 0), 0);
+      const refundAmount = dailyBookings.reduce((sum, b) => sum + computeNet(b).refund, 0);
+      result.push({ date: cursor, revenue, bookings: nonRefundedCount, refunded: refundedCount, refundAmount });
+      cursor = addDaysYmd(cursor, 1);
     }
 
     return result;
   },
 
-  async getPaymentMethodBreakdown() {
+  async getPaymentMethodBreakdown(filters?: { startDate?: string; endDate?: string }) {
     // Helper to compute net cash/upi after approved refunds proportionally
     const computeNetSplit = (b: any) => {
       const total = Number(b.totalAmount || 0);
@@ -1201,7 +1376,13 @@ export const storage = {
       return { netCash, netUpi };
     };
 
-    const allBookings = await db.query.bookings.findMany();
+    // Optional date filter
+    const whereParts: any[] = [];
+    if (filters?.startDate) whereParts.push(gte(bookings.bookingDate as any, filters.startDate));
+    if (filters?.endDate) whereParts.push(lte(bookings.bookingDate as any, filters.endDate));
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+
+    const allBookings = await db.query.bookings.findMany({ where: whereClause });
     let cash = 0;
     let upi = 0;
     for (const b of allBookings as any[]) {
@@ -1212,7 +1393,7 @@ export const storage = {
     return { cash, upi };
   },
 
-  async getTimeSlotPerformance() {
+  async getTimeSlotPerformance(filters?: { startDate?: string; endDate?: string }) {
     const computeNet = (b: any) => {
       const total = Number(b.totalAmount || 0);
       const isRefunded = (b.refundStatus === 'approved');
@@ -1220,7 +1401,13 @@ export const storage = {
       return Math.max(0, total - refund);
     };
 
-    const allBookings = await db.query.bookings.findMany();
+    // Optional date filter
+    const whereParts: any[] = [];
+    if (filters?.startDate) whereParts.push(gte(bookings.bookingDate as any, filters.startDate));
+    if (filters?.endDate) whereParts.push(lte(bookings.bookingDate as any, filters.endDate));
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+
+    const allBookings = await db.query.bookings.findMany({ where: whereClause });
 
     const slotMap = new Map<string, { timeSlot: string; bookings: number; revenue: number }>();
     for (const booking of allBookings as any[]) {
@@ -1389,86 +1576,209 @@ export const storage = {
     });
   },
 
-  async createDailyIncome(incomeData: any) {
-    const result = await db.insert(dailyIncome).values(incomeData).returning();
-    return result[0];
-  },
 
-  async updateDailyIncome(id: string, incomeData: any) {
-    const result = await db.update(dailyIncome)
-      .set({ ...incomeData, updatedAt: sql`(CURRENT_TIMESTAMP)` })
-      .where(eq(dailyIncome.id, id))
-      .returning();
-    return result[0];
-  },
 
-  async deleteDailyIncome(id: string) {
-    const result = await db.delete(dailyIncome)
-      .where(eq(dailyIncome.id, id))
-      .returning();
-    return result[0];
-  },
-
-  async getDailyIncomeById(id: string) {
-    return db.query.dailyIncome.findFirst({
-      where: eq(dailyIncome.id, id)
+  // Revenue Goals operations
+  async setMonthlyGoal(data: InsertRevenueGoal & { createdBy: string }) {
+    const parsed = insertRevenueGoalSchema.parse(data);
+    // Check if goal already exists for this month
+    const existing = await db.query.revenueGoals.findFirst({
+      where: eq(revenueGoals.month as any, parsed.month)
     });
-  },
-
-  async getDailyIncomeByDate(date: string) {
-    const rows = await db.query.dailyIncome.findMany({
-      where: eq(dailyIncome.date, date),
-      orderBy: [desc(dailyIncome.createdAt as any)]
-    });
-    return rows[0] || null;
-  },
-
-  async syncDailyIncomeFromBookings(params: { startDate?: string; endDate?: string; mode?: 'overwrite' | 'skip' | 'merge' }, userId: string) {
-    const whereParts: any[] = [];
-    if (params.startDate) whereParts.push(sql`${bookings.bookingDate} >= ${params.startDate}`);
-    if (params.endDate) whereParts.push(sql`${bookings.bookingDate} <= ${params.endDate}`);
-    const whereClause = whereParts.length ? and(...whereParts) : undefined;
-
-    const rows = await db.query.bookings.findMany({ where: whereClause });
-
-    const byDate = new Map<string, { shows: Set<string>; cash: number; upi: number; other: number }>();
-    for (const b of rows) {
-      const d = b.bookingDate as string;
-      if (!byDate.has(d)) byDate.set(d, { shows: new Set<string>(), cash: 0, upi: 0, other: 0 });
-      const agg = byDate.get(d)!;
-      agg.shows.add(`${b.theatreName}|${b.timeSlot}`);
-      agg.cash += Number(b.cashAmount || 0) + Number(b.snacksCash || 0);
-      agg.upi += Number(b.upiAmount || 0) + Number(b.snacksUpi || 0);
+    
+    if (existing) {
+      // Update existing goal
+      const updated = await db.update(revenueGoals)
+        .set({ goalAmount: parsed.goalAmount, updatedAt: sql`(CURRENT_TIMESTAMP)` })
+        .where(eq(revenueGoals.id, existing.id))
+        .returning();
+      return updated[0];
+    } else {
+      // Create new goal
+      const created = await db.insert(revenueGoals)
+        .values({ ...parsed, createdBy: data.createdBy })
+        .returning();
+      return created[0];
     }
+  },
 
-    const results: any[] = [];
-    for (const [date, agg] of byDate.entries()) {
-      const existing = await this.getDailyIncomeByDate(date);
-      const payload = {
-        date,
-        numberOfShows: agg.shows.size,
-        cashReceived: agg.cash,
-        upiReceived: agg.upi,
-        otherPayments: 0,
-      } as any;
+  async getMonthlyGoal(month: string) {
+    return db.query.revenueGoals.findFirst({
+      where: eq(revenueGoals.month as any, month)
+    });
+  },
 
-      if (!existing) {
-        results.push(await this.createDailyIncome({ ...payload, createdBy: userId }));
-      } else if ((params.mode || 'overwrite') === 'overwrite') {
-        results.push(await this.updateDailyIncome(existing.id, payload));
-      } else if (params.mode === 'merge') {
-        results.push(await this.updateDailyIncome(existing.id, {
-          date,
-          numberOfShows: Number(existing.numberOfShows || 0) + payload.numberOfShows,
-          cashReceived: Number(existing.cashReceived || 0) + payload.cashReceived,
-          upiReceived: Number(existing.upiReceived || 0) + payload.upiReceived,
-          otherPayments: Number(existing.otherPayments || 0) + payload.otherPayments,
-        }));
-      } else {
-        results.push(existing);
+  async getRevenueProgress(month: string) {
+    // Get the goal for the month
+    const goal = await this.getMonthlyGoal(month);
+    if (!goal) return { goal: null, currentRevenue: 0, progress: 0 };
+
+    // Calculate current NET revenue for the month from bookings (same logic as getDailyRevenue)
+    // Use proper month range calculation (same as frontend)
+    const [year, monthNum] = month.split('-').map(Number);
+    const startDate = new Date(year, monthNum - 1, 1);
+    const endDate = new Date(year, monthNum, 0); // Last day of the month
+    
+    // Use local-date strings (avoid UTC shift) to match frontend range
+    const toLocalYmd = (d: Date) => {
+      const tz = d.getTimezoneOffset();
+      const local = new Date(d.getTime() - tz * 60000);
+      return local.toISOString().split('T')[0];
+    };
+    const startDateStr = toLocalYmd(startDate);
+    const endDateStr = toLocalYmd(endDate);
+    
+    // Get all bookings for the month
+    const monthBookings = await db.query.bookings.findMany({
+      where: and(
+        gte(bookings.bookingDate, startDateStr),
+        lte(bookings.bookingDate, endDateStr)
+      )
+    });
+
+    // Helper to compute net amounts (same as getDailyRevenue)
+    const computeNet = (b: any) => {
+      const total = Number(b.totalAmount || 0);
+      const isRefunded = (b.refundStatus === 'approved');
+      const refund = isRefunded ? Math.max(0, Math.min(Number(b.refundAmount || 0), total)) : 0;
+      const netTotal = Math.max(0, total - refund);
+      return { netTotal };
+    };
+
+    // Calculate net revenue (after refunds)
+    const currentRevenue = monthBookings.reduce((sum, b) => {
+      const { netTotal } = computeNet(b);
+      return sum + netTotal;
+    }, 0);
+
+    const progress = goal.goalAmount > 0 ? (currentRevenue / goal.goalAmount) * 100 : 0;
+
+    return {
+      goal,
+      currentRevenue,
+      progress: Math.min(progress, 100) // Cap at 100%
+    };
+  },
+
+  async checkAndCreateRevenueNotifications(month: string) {
+    const progress = await this.getRevenueProgress(month);
+    if (!progress.goal) return { created: 0 };
+
+    const today = new Date();
+    const currentMonth = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+    
+    // Only check for current month
+    if (month !== currentMonth) return { created: 0 };
+
+    const dayOfMonth = today.getDate();
+    const isMiddleOfMonth = dayOfMonth >= 14 && dayOfMonth <= 16; // Mid-month check
+
+    let created = 0;
+
+    // Check if revenue is below 50% by mid-month
+    if (isMiddleOfMonth && progress.progress < 50) {
+      const admins = await db.query.users.findMany({ where: eq(users.role as any, 'admin') as any });
+      
+      // Check if notification already exists for this month
+      const existingNotification = await db.query.notifications.findFirst({
+        where: and(
+          eq(notifications.type as any, 'revenue-alert'),
+          eq(notifications.relatedId as any, `${month}-midmonth`)
+        )
+      });
+
+      if (!existingNotification) {
+        for (const admin of admins as any[]) {
+          await db.insert(notifications).values({
+            userId: admin.id,
+            title: 'Revenue Below Target',
+            body: `Revenue below 50% of target at mid-month (${progress.progress.toFixed(1)}%). Please review strategy.`,
+            type: 'revenue-alert',
+            relatedType: 'revenue',
+            relatedId: `${month}-midmonth`,
+          });
+          created++;
+        }
       }
     }
 
-    return results;
-  }
+    return { created };
+  },
+
+  async checkCancellationRate() {
+    // Get bookings from last 30 days
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const startDate = thirtyDaysAgo.toISOString().split('T')[0];
+
+    const totalBookings = await db.select({
+      count: sql<number>`COUNT(*)`
+    }).from(bookings)
+      .where(gte(bookings.bookingDate, startDate));
+
+    const cancelledBookings = await db.select({
+      count: sql<number>`COUNT(*)`
+    }).from(bookings)
+      .where(and(
+        gte(bookings.bookingDate, startDate),
+        eq(bookings.refundStatus as any, 'approved')
+      ));
+
+    const total = totalBookings[0]?.count || 0;
+    const cancelled = cancelledBookings[0]?.count || 0;
+    const cancellationRate = total > 0 ? (cancelled / total) * 100 : 0;
+
+    let created = 0;
+
+    // If cancellation rate > 20%, notify admins
+    if (cancellationRate > 20) {
+      const admins = await db.query.users.findMany({ where: eq(users.role as any, 'admin') as any });
+      
+      // Check if notification already exists for today
+      const today = new Date().toISOString().split('T')[0];
+      const existingNotification = await db.query.notifications.findFirst({
+        where: and(
+          eq(notifications.type as any, 'cancellation-alert'),
+          eq(notifications.relatedId as any, today)
+        )
+      });
+
+      if (!existingNotification) {
+        for (const admin of admins as any[]) {
+          await db.insert(notifications).values({
+            userId: admin.id,
+            title: 'High Cancellation Rate Detected',
+            body: `Cancellation rate is ${cancellationRate.toFixed(1)}% (${cancelled}/${total} bookings). Investigate immediately.`,
+            type: 'cancellation-alert',
+            relatedType: 'bookings',
+            relatedId: today,
+          });
+          created++;
+        }
+      }
+    }
+
+    return { created, cancellationRate, total, cancelled };
+  },
+
+  async markNotificationAsRead(notificationId: string, userId: string) {
+    // Verify the notification belongs to the user
+    const notification = await db.query.notifications.findFirst({
+      where: and(
+        eq(notifications.id, notificationId),
+        eq(notifications.userId, userId)
+      )
+    });
+
+    if (!notification) {
+      throw new Error('Notification not found');
+    }
+
+    const updated = await db.update(notifications)
+      .set({ isRead: true })
+      .where(eq(notifications.id, notificationId))
+      .returning();
+
+    return updated[0];
+  },
 };

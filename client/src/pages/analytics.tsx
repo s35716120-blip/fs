@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
@@ -43,16 +43,51 @@ export default function Analytics() {
     }
   }, [isAuthenticated, isLoading, toast]);
 
+  // Month filter (defaults to current month)
+  const [month, setMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`; // YYYY-MM
+  });
+  const getMonthRange = (ym: string) => {
+    const [y, m] = ym.split('-').map(Number);
+    const start = new Date(y, m - 1, 1);
+    const end = new Date(y, m, 0);
+    const toIso = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().split('T')[0];
+    return { startDate: toIso(start), endDate: toIso(end) };
+  };
+  const monthRange = getMonthRange(month);
+
   const { data: dailyRevenue, isLoading: isDailyRevenueLoading, error: dailyRevenueError } = useQuery<any[]>({
-    queryKey: ["/api/analytics/daily-revenue?days=30"],
+    queryKey: ["/api/analytics/daily-revenue", monthRange],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set('startDate', monthRange.startDate);
+      params.set('endDate', monthRange.endDate);
+      const res = await fetch(`/api/analytics/daily-revenue?${params.toString()}`);
+      return res.json();
+    }
   });
 
   const { data: paymentMethods, isLoading: isPaymentMethodsLoading, error: paymentMethodsError } = useQuery<any>({
-    queryKey: ["/api/analytics/payment-methods"],
+    queryKey: ["/api/analytics/payment-methods", monthRange],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set('startDate', monthRange.startDate);
+      params.set('endDate', monthRange.endDate);
+      const res = await fetch(`/api/analytics/payment-methods?${params.toString()}`);
+      return res.json();
+    }
   });
 
   const { data: timeSlots, isLoading: isTimeSlotsLoading, error: timeSlotsError } = useQuery<any[]>({
-    queryKey: ["/api/analytics/time-slots"],
+    queryKey: ["/api/analytics/time-slots", monthRange],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set('startDate', monthRange.startDate);
+      params.set('endDate', monthRange.endDate);
+      const res = await fetch(`/api/analytics/time-slots?${params.toString()}`);
+      return res.json();
+    }
   });
 
   // Handle errors
@@ -112,6 +147,15 @@ export default function Analytics() {
             <h2 className="text-2xl font-bold text-white" data-testid="text-page-title">Analytics Dashboard</h2>
             <p className="text-gray-400">Comprehensive data visualization and business insights</p>
           </div>
+          <div className="flex items-center space-x-2">
+            <label className="text-gray-400 text-sm">Month</label>
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className="bg-rosae-dark-gray border border-gray-600 text-white rounded px-2 py-1"
+            />
+          </div>
         </div>
 
         {/* Revenue Trends */}
@@ -127,7 +171,9 @@ export default function Analytics() {
               </div>
               <div className="h-80">
                 {isDailyRevenueLoading ? (
-                  <div className="flex items-center justify-center h-full text-gray-400">Loading...</div>
+                  <div className="flex items-center justify-center h-full">
+                    <div className="w-10 h-10 border-4 border-gray-600 border-t-rosae-red rounded-full animate-spin" aria-label="Loading"></div>
+                  </div>
                 ) : dailyRevenue && dailyRevenue.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={dailyRevenue}>
@@ -178,7 +224,9 @@ export default function Analytics() {
               </div>
               <div className="h-80">
                 {isDailyRevenueLoading ? (
-                  <div className="flex items-center justify-center h-full text-gray-400">Loading...</div>
+                  <div className="flex items-center justify-center h-full">
+                    <div className="w-10 h-10 border-4 border-gray-600 border-t-rosae-red rounded-full animate-spin" aria-label="Loading"></div>
+                  </div>
                 ) : dailyRevenue && dailyRevenue.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={dailyRevenue}>

@@ -23,7 +23,11 @@ function LayoutContent({ children }: LayoutProps) {
   const { isOpen, toggle } = useSidebar();
   const { user, isAuthenticated } = useAuth();
   const [now, setNow] = useState(Date.now());
-  const { data: notifications } = useQuery<any[]>({ queryKey: ["/api/notifications"] });
+  const { data: notifications } = useQuery<any[]>({ queryKey: ["/api/notifications"], queryFn: async () => {
+    const res = await fetch('/api/notifications', { credentials: 'include' });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }});
   const unreadCount = (notifications || []).filter((n: any) => !n.isRead).length;
 
   // Ensure login start is set when authenticated
@@ -74,23 +78,30 @@ function LayoutContent({ children }: LayoutProps) {
           </Button>
         </div>
 
-        {/* Top bar: username + session timer + notifications */}
-        <div className="w-full bg-rosae-dark-gray border-b border-gray-600 px-4 py-2 flex items-center justify-end gap-4">
-          <a href="/notifications" className="relative text-gray-300 hover:text-white" title="Notifications">
-            <Bell className="w-5 h-5" />
-            {unreadCount > 0 && (
-              <span className="absolute -top-2 -right-2 bg-red-600 text-white text-xs px-1 rounded">
-                {unreadCount}
-              </span>
-            )}
+        {/* Top bar: brand + username + session timer + notifications */}
+        <div className="w-full bg-rosae-dark-gray border-b border-gray-600 px-4 py-2 flex items-center justify-between gap-4">
+          {/* Brand (click to dashboard) */}
+          <a href="/" className="flex items-center gap-2 group" title="Go to Dashboard">
+            <img src="/rosae-logo.jpg" alt="ROSAE" className="w-8 h-8 object-contain rounded shadow ring-1 ring-rosae-red/40 group-hover:ring-rosae-red/70" />
+            <span className="hidden sm:block font-semibold tracking-wide text-white group-hover:text-rosae-red">ROSAE</span>
           </a>
-          <div className="flex items-center text-gray-300 text-sm gap-2">
-            <User className="w-4 h-4" />
-            <span className="font-medium">{username}</span>
-          </div>
-          <div className="flex items-center text-gray-300 text-sm gap-2">
-            <Clock className="w-4 h-4" />
-            <span title="Session duration">{sessionTime}</span>
+          <div className="flex items-center gap-4">
+            <a href="/notifications" className="relative text-gray-300 hover:text-white" title="Notifications">
+              <Bell className="w-5 h-5" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-2 -right-2 bg-red-600 text-white text-[10px] leading-none px-1.5 py-0.5 rounded-full min-w-[16px] text-center">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+            </a>
+            <div className="flex items-center text-gray-300 text-sm gap-2">
+              <User className="w-4 h-4" />
+              <span className="font-medium">{username}</span>
+            </div>
+            <div className="flex items-center text-gray-300 text-sm gap-2">
+              <Clock className="w-4 h-4" />
+              <span title="Session duration">{sessionTime}</span>
+            </div>
           </div>
         </div>
 

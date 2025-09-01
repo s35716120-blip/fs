@@ -63,6 +63,13 @@ export default function FeedbackManagementPage() {
   const [filters, setFilters] = useState<{ collected?: string; theatreName?: string; date?: string; timeSlot?: string }>({});
   const [pendingOnly, setPendingOnly] = useState(true);
 
+  // Load time slots from config for dropdowns
+  const { data: config } = useQuery<any>({
+    queryKey: ["/api/config"],
+    staleTime: 5 * 60 * 1000,
+  });
+  const timeSlotOptions: string[] = (config?.timeSlots || ['10:00 AM','1:00 PM','4:00 PM','7:00 PM']);
+
   // Redirect to login if needed
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -192,7 +199,20 @@ export default function FeedbackManagementPage() {
               </div>
               <div>
                 <label className="block text-sm text-gray-300 mb-1">Time Slot</label>
-                <Input className="bg-gray-800 border-gray-600 text-white" placeholder="e.g., 1:00 PM" value={filters.timeSlot || ''} onChange={(e) => setFilters(f => ({ ...f, timeSlot: e.target.value || undefined }))} />
+                <Select
+                  value={filters.timeSlot ?? 'all'}
+                  onValueChange={(v) => setFilters(f => ({ ...f, timeSlot: v === 'all' ? undefined : v }))}
+                >
+                  <SelectTrigger className="bg-gray-800 border-gray-600">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    {timeSlotOptions.map((slot) => (
+                      <SelectItem key={slot} value={slot}>{slot}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </CardContent>

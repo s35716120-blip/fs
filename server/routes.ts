@@ -7,6 +7,7 @@ import {
   insertExpenseSchema,
   insertLeaveApplicationSchema,
   insertCustomerTicketSchema,
+  insertLeadInfoSchema,
   type Booking,
 } from "@shared/schema";
 import session from "express-session";
@@ -216,10 +217,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.upsertUser({
             id: user.id,
             email: user.email,
-            first_name: user.firstName,
-            last_name: user.lastName,
-            profile_image_url: null,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            profileImageUrl: null,
             role: user.role,
+            active: true,
           });
           console.log("Admin user created/updated in database");
         } catch (dbError) {
@@ -308,11 +310,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  // Debug endpoint to check session
+  app.get("/api/debug/session", async (req, res) => {
+    const sessionUser = (req as any).session?.user;
+    res.json({
+      hasSession: !!sessionUser,
+      sessionData: sessionUser ? {
+        email: sessionUser.claims?.email,
+        role: sessionUser.claims?.role,
+        sub: sessionUser.claims?.sub
+      } : null
+    });
+  });
+
   // Check auth status
   app.get("/api/auth/status", async (req, res) => {
-    console.log("Auth status check - session:", (req as any).session);
     const sessionUser = (req as any).session?.user;
-    console.log("Session user:", sessionUser);
 
     if (sessionUser && sessionUser.claims) {
       try {
@@ -327,10 +340,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           user = await storage.getUserByEmail(sessionUser.claims.email);
         }
 
-        console.log(
-          "User lookup result:",
-          user ? { id: user.id, email: user.email } : "User not found",
-        );
+
 
         const userData = {
           id: sessionUser.claims.sub,
@@ -340,11 +350,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           profileImageUrl: sessionUser.claims.profile_image_url,
           role:
             user?.role ||
-            (sessionUser.claims.email === "admin@rosae.com"
+            (sessionUser.claims.email === "admin@rosae.com" || sessionUser.claims.email === "rosaeleisure@gmail.com"
               ? "admin"
               : "employee"),
         };
-        console.log("Returning authenticated user:", userData);
         res.json({ authenticated: true, user: userData });
       } catch (error) {
         console.error("Error fetching user data:", error);
@@ -356,33 +365,105 @@ export async function registerRoutes(app: Express): Promise<Server> {
           lastName: sessionUser.claims.last_name,
           profileImageUrl: sessionUser.claims.profile_image_url,
           role:
-            sessionUser.claims.email === "admin@rosae.com"
+            sessionUser.claims.email === "admin@rosae.com" || sessionUser.claims.email === "rosaeleisure@gmail.com"
               ? "admin"
               : "employee",
         };
         res.json({ authenticated: true, user: userData });
       }
     } else {
-      console.log("No valid session found");
       res.json({ authenticated: false });
     }
   });
 
-  // Get all users (admin only)
+  // Get users with pagination and filters (admin only)
   app.get("/api/users", isAuthenticated, async (req: any, res) => {
     try {
       const currentUser = req.user;
-      if (currentUser.claims.email !== "admin@rosae.com") {
+
+      
+      if (currentUser.claims.email !== "admin@rosae.com" && currentUser.claims.email !== "rosaeleisure@gmail.com") {
         return res
           .status(403)
           .json({ message: "Only admins can view all users" });
       }
 
-      const users = await storage.getAllUsers();
-      res.json(users);
+      const { page = '1', pageSize = '20', email, role, active } = req.query as any;
+      const p = Number(page) || 1;
+      const ps = Math.min(100, Number(pageSize) || 20);
+      const result = await storage.listUsers({ page: p, pageSize: ps, email: email || undefined, role: role || undefined, active: active === undefined ? undefined : active === 'true' });
+      res.json(result);
     } catch (error) {
       console.error("Error fetching users:", error);
       res.status(500).json({ message: "Failed to fetch users" });
+    }
+  });
+
+  // Update a user (admin only)
+  app.patch('/api/users/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const currentUser = req.user;
+      if (currentUser.claims.email !== 'admin@rosae.com') {
+        return res.status(403).json({ message: 'Only admins can update users' });
+      }
+      const { id } = req.params as any;
+      const update = req.body || {};
+      // Prevent email duplication and protect admin account email change
+      if (update.email && update.email !== 'admin@rosae.com') {
+        const existing = await storage.getUserByEmail(update.email);
+        if (existing && existing.id !== id) {
+          return res.status(400).json({ message: 'Email already in use' });
+        }
+      }
+      if (update.role && !['admin','employee'].includes(update.role)) {
+        return res.status(400).json({ message: 'Invalid role' });
+      }
+      const saved = await storage.updateUser(id, update);
+      res.json(saved);
+    } catch (error) {
+      console.error('Error updating user:', error);
+      res.status(500).json({ message: 'Failed to update user' });
+    }
+  });
+
+  // Soft delete / deactivate a user (admin only)
+  app.delete('/api/users/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const currentUser = req.user;
+      if (currentUser.claims.email !== 'admin@rosae.com') {
+        return res.status(403).json({ message: 'Only admins can delete users' });
+      }
+      const { id } = req.params as any;
+      if (id === 'admin-001') return res.status(400).json({ message: 'Cannot delete primary admin' });
+      await storage.deactivateUser(id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      res.status(500).json({ message: 'Failed to delete user' });
+    }
+  });
+
+  // Notifications
+  app.get('/api/notifications', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const rows = await storage.listNotifications(userId);
+      res.json(rows);
+    } catch (error) {
+      console.error('Error listing notifications:', error);
+      res.status(500).json({ message: 'Failed to fetch notifications' });
+    }
+  });
+
+  app.patch('/api/notifications/:id/read', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params as any;
+      const { isRead } = req.body || {};
+      const result = await storage.markNotificationRead(id, Boolean(isRead));
+      res.json(result);
+    } catch (error) {
+      console.error('Error updating notification:', error);
+      res.status(500).json({ message: 'Failed to update notification' });
     }
   });
 
@@ -392,7 +473,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const currentUser = req.user;
       const isAdmin = currentUser.claims.email === "admin@rosae.com";
 
-      let { startDate, endDate, userId, email } = req.query as any;
+      let { startDate, endDate, userId, email, page, pageSize } = req.query as any;
 
       // Non-admins can only view their own login records
       if (!isAdmin) {
@@ -400,8 +481,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         email = currentUser.claims.email;
       }
 
-      const rows = await storage.listLogins({ startDate, endDate, userId, email });
-      res.json(rows);
+      const result = await storage.listLogins({ startDate, endDate, userId, email, page: page ? Number(page) : 1, pageSize: pageSize ? Number(pageSize) : 20 });
+      res.json(result);
     } catch (error) {
       console.error("Error fetching login tracker:", error);
       res.status(500).json({ message: "Failed to fetch login tracker" });
@@ -964,12 +1045,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/expenses", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
+      // Debug: log payload to verify paidCash/paidUpi values
+      console.log("/api/expenses payload:", JSON.stringify(req.body));
       const expenseData = insertExpenseSchema.parse(req.body);
 
       const expense = await storage.createExpense({
         ...expenseData,
         createdBy: userId,
       } as any);
+
+      // Debug: log created row
+      console.log("/api/expenses created:", JSON.stringify(expense));
 
       await storage.logActivity(
         userId,
@@ -1200,6 +1286,165 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Lead Infos
+  app.post('/api/lead-infos', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const payload = insertLeadInfoSchema.parse(req.body);
+      const created = await storage.createLeadInfo({ ...payload, createdBy: userId });
+      res.json(created);
+    } catch (error) {
+      console.error('Error creating lead info:', error);
+      res.status(500).json({ message: 'Failed to create lead info' });
+    }
+  });
+
+  app.get('/api/lead-infos', isAuthenticated, async (req: any, res) => {
+    try {
+      const { startDate, endDate, source } = req.query as any;
+      const rows = await storage.listLeadInfos({ startDate, endDate, source });
+      res.json(rows);
+    } catch (error) {
+      console.error('Error listing lead infos:', error);
+      res.status(500).json({ message: 'Failed to fetch lead infos' });
+    }
+  });
+
+  app.get('/api/lead-infos/stats', isAuthenticated, async (req: any, res) => {
+    try {
+      const { startDate, endDate } = req.query as any;
+      const stats = await storage.getLeadStats({ startDate, endDate });
+      res.json(stats);
+    } catch (error) {
+      console.error('Error fetching lead stats:', error);
+      res.status(500).json({ message: 'Failed to fetch lead stats' });
+    }
+  });
+
+  app.get('/api/lead-infos/export', isAuthenticated, async (req: any, res) => {
+    try {
+      const { startDate, endDate, source } = req.query as any;
+      const csv = await storage.exportLeadInfosCSV({ startDate, endDate, source });
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="lead_infos.csv"');
+      res.send(csv);
+    } catch (error) {
+      console.error('Error exporting lead infos:', error);
+      res.status(500).json({ message: 'Failed to export lead infos' });
+    }
+  });
+
+  app.post('/api/lead-infos/notify-missing-yesterday', isAuthenticated, async (req: any, res) => {
+    try {
+      // Compute yesterday in YYYY-MM-DD
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2,'0');
+      const day = String(d.getDate()).padStart(2,'0');
+      const ymd = `${y}-${m}-${day}`;
+      const result = await storage.createLeadNotificationsIfMissing(ymd);
+      res.json(result);
+    } catch (error) {
+      console.error('Error creating missing-yesterday notifications:', error);
+      res.status(500).json({ message: 'Failed to trigger notifications' });
+    }
+  });
+
+  // Revenue Goals API
+  app.post('/api/revenue/goal', isAuthenticated, async (req: any, res) => {
+    try {
+      const sessionUser = req.user;
+      
+      // Get user role from database (consistent with auth status endpoint)
+      let dbUser = null;
+      if (sessionUser.claims.sub) {
+        dbUser = await storage.getUser(sessionUser.claims.sub);
+      }
+      if (!dbUser && sessionUser.claims.email) {
+        dbUser = await storage.getUserByEmail(sessionUser.claims.email);
+      }
+      
+      const userRole = dbUser?.role || 
+        (sessionUser.claims.email === "admin@rosae.com" || sessionUser.claims.email === "rosaeleisure@gmail.com" ? "admin" : "employee");
+      
+      if (userRole !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+      
+      const userId = sessionUser.claims.sub;
+      const result = await storage.setMonthlyGoal({ ...req.body, createdBy: userId });
+      res.json(result);
+    } catch (error) {
+      console.error('Error setting monthly goal:', error);
+      res.status(500).json({ message: 'Failed to set monthly goal' });
+    }
+  });
+
+  app.get('/api/revenue/progress', isAuthenticated, async (req: any, res) => {
+    try {
+      const { month } = req.query;
+      if (!month) {
+        return res.status(400).json({ message: 'Month parameter required (YYYY-MM format)' });
+      }
+      
+      const progress = await storage.getRevenueProgress(month as string);
+      res.json(progress);
+    } catch (error) {
+      console.error('Error getting revenue progress:', error);
+      res.status(500).json({ message: 'Failed to get revenue progress' });
+    }
+  });
+
+  app.post('/api/notifications/check-revenue', isAuthenticated, async (req: any, res) => {
+    try {
+      const user = req.user;
+      if (user.claims.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+      
+      const { month } = req.body;
+      if (!month) {
+        return res.status(400).json({ message: 'Month parameter required (YYYY-MM format)' });
+      }
+      
+      const result = await storage.checkAndCreateRevenueNotifications(month);
+      res.json(result);
+    } catch (error) {
+      console.error('Error checking revenue notifications:', error);
+      res.status(500).json({ message: 'Failed to check revenue notifications' });
+    }
+  });
+
+  app.post('/api/notifications/check-cancellations', isAuthenticated, async (req: any, res) => {
+    try {
+      const user = req.user;
+      if (user.claims.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+      
+      const result = await storage.checkCancellationRate();
+      res.json(result);
+    } catch (error) {
+      console.error('Error checking cancellation rate:', error);
+      res.status(500).json({ message: 'Failed to check cancellation rate' });
+    }
+  });
+
+  // Mark notification as read
+  app.post('/api/notifications/:id/read', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      
+      const result = await storage.markNotificationAsRead(id, userId);
+      res.json(result);
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+      res.status(500).json({ message: 'Failed to mark notification as read' });
+    }
+  });
+
   // Export expenses as CSV (optional category filter)
   app.get("/api/expenses/export", isAuthenticated, async (req: any, res) => {
     try {
@@ -1255,8 +1500,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Analytics routes
   app.get("/api/analytics/daily-revenue", isAuthenticated, async (req, res) => {
     try {
-      const days = req.query.days ? parseInt(req.query.days as string) : 7;
-      const dailyRevenue = await storage.getDailyRevenue(days);
+      const { startDate, endDate, days: daysStr } = req.query as any;
+      let dailyRevenue;
+      if (startDate || endDate) {
+        dailyRevenue = await storage.getDailyRevenue({ startDate, endDate });
+      } else {
+        const days = daysStr ? parseInt(daysStr as string, 10) : 7;
+        dailyRevenue = await storage.getDailyRevenue(days);
+      }
       res.json(dailyRevenue);
     } catch (error) {
       console.error("Error fetching daily revenue:", error);
@@ -1269,7 +1520,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     isAuthenticated,
     async (req, res) => {
       try {
-        const paymentMethods = await storage.getPaymentMethodBreakdown();
+        const { startDate, endDate } = req.query as any;
+        const paymentMethods = await storage.getPaymentMethodBreakdown({ startDate, endDate });
         res.json(paymentMethods);
       } catch (error) {
         console.error("Error fetching payment methods breakdown:", error);
@@ -1280,7 +1532,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/analytics/time-slots", isAuthenticated, async (req, res) => {
     try {
-      const timeSlots = await storage.getTimeSlotPerformance();
+      const { startDate, endDate } = req.query as any;
+      const timeSlots = await storage.getTimeSlotPerformance({ startDate, endDate });
       res.json(timeSlots);
     } catch (error) {
       console.error("Error fetching time slot performance:", error);
@@ -1648,11 +1901,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Lead Info routes
+  app.get("/api/lead-infos", isAuthenticated, async (req, res) => {
+    try {
+      const { startDate, endDate, source } = req.query as any;
+      const rows = await storage.listLeadInfos({
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+        source: source || undefined,
+      });
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching lead infos:", error);
+      res.status(500).json({ message: "Failed to fetch lead infos" });
+    }
+  });
+
+  app.post("/api/lead-infos", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const body = req.body || {};
+      // Basic normalization
+      const payload = {
+        date: String(body.date),
+        shift: String(body.shift),
+        source: String(body.source),
+        totalLeads: Number(body.totalLeads || 0),
+        goodLeads: Number(body.goodLeads || 0),
+        badLeads: Number(body.badLeads || 0),
+        callsMade: Number(body.callsMade || 0),
+        description: body.description ? String(body.description) : null,
+        createdBy: userId,
+      } as any;
+      const saved = await storage.createLeadInfo(payload);
+      res.json(saved);
+    } catch (error) {
+      console.error("Error creating lead info:", error);
+      res.status(500).json({ message: "Failed to save lead info" });
+    }
+  });
+
+  app.get("/api/lead-infos/export", isAuthenticated, async (req, res) => {
+    try {
+      const { startDate, endDate, source } = req.query as any;
+      const csv = await storage.exportLeadInfosCSV({
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+        source: source || undefined,
+      });
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", 'attachment; filename="lead_infos.csv"');
+      res.send(csv);
+    } catch (error) {
+      console.error("Error exporting lead infos:", error);
+      res.status(500).json({ message: "Failed to export lead infos" });
+    }
+  });
+
+  // Trigger notifications if a date has no lead info entries
+  app.post("/api/lead-infos/notify-missing", isAuthenticated, async (req, res) => {
+    try {
+      const date = (req.query.date as string) || new Date(Date.now() - 24*60*60*1000).toISOString().slice(0,10);
+      const result = await storage.createLeadNotificationsIfMissing(date);
+      res.json(result);
+    } catch (error) {
+      console.error("Error notifying missing lead infos:", error);
+      res.status(500).json({ message: "Failed to trigger notifications" });
+    }
+  });
+
   // Analytics routes
   app.get("/api/analytics/daily-revenue", isAuthenticated, async (req, res) => {
     try {
-      const { days = 7 } = req.query;
-      const data = await storage.getDailyRevenue(parseInt(days as string));
+      const { startDate, endDate, days } = req.query as any;
+      let data;
+      if (startDate || endDate) {
+        data = await storage.getDailyRevenue({ startDate, endDate });
+      } else {
+        data = await storage.getDailyRevenue(days ? parseInt(days) : 7);
+      }
       res.json(data);
     } catch (error) {
       console.error("Error fetching daily revenue:", error);
@@ -1665,7 +1992,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     isAuthenticated,
     async (req, res) => {
       try {
-        const data = await storage.getPaymentMethodBreakdown();
+        const { startDate, endDate } = req.query as any;
+        const data = await storage.getPaymentMethodBreakdown({ startDate, endDate });
         res.json(data);
       } catch (error) {
         console.error("Error fetching payment method breakdown:", error);
@@ -1678,7 +2006,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/analytics/time-slots", isAuthenticated, async (req, res) => {
     try {
-      const data = await storage.getTimeSlotPerformance();
+      const { startDate, endDate } = req.query as any;
+      const data = await storage.getTimeSlotPerformance({ startDate, endDate });
       res.json(data);
     } catch (error) {
       console.error("Error fetching time slot performance:", error);

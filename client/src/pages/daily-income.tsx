@@ -494,6 +494,14 @@ export default function DailyIncomePage() {
                 title="Toggle compact INR format"
               />
             </div>
+            <Button
+              variant="outline"
+              className="border-gray-600 hover:border-gray-500 hover:bg-gray-700/50"
+              onClick={() => setFilters({ startDate: '', endDate: '', paymentType: 'all' })}
+              title="Clear filters"
+            >
+              <Filter className="w-4 h-4 mr-2" /> Clear
+            </Button>
             <Button 
               variant="outline" 
               className="border-gray-600 hover:border-blue-500 hover:bg-blue-500/10 hover:text-blue-400 transition-all duration-300"

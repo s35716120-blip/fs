@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Download, FileText, Filter, Printer, Search, Trash2, Edit3 } from "lucide-react";
+import { Download, FileText, Filter, Printer, Search, Trash2, Edit3, X } from "lucide-react";
 
 const REASONS = ["Cancellation", "Refund", "Technical Issue", "Other"] as const;
 
@@ -52,6 +52,19 @@ export default function CustomerTicketsPage() {
     "/api/tickets",
     { page, pageSize, phone: searchPhone, reason: filterReason, timeSlot: timeSlotFilter, startDate: dateFrom, endDate: dateTo }
   ], [page, pageSize, searchPhone, filterReason, timeSlotFilter, dateFrom, dateTo]);
+
+  // Load configuration for time slots
+  const configQuery = useQuery<any>({
+    queryKey: ["/api/config"],
+    queryFn: async () => {
+      const res = await fetch('/api/config', { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to load configuration');
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const timeSlotOptions: string[] = (configQuery.data?.timeSlots || ['10:00 AM','1:00 PM','4:00 PM','7:00 PM']);
 
   const { data, isFetching } = useQuery<TicketsResponse>({
     queryKey,
@@ -164,7 +177,16 @@ export default function CustomerTicketsPage() {
               </div>
               <div>
                 <Label>Time Slot (optional)</Label>
-                <Input value={timeSlot} onChange={(e) => setTimeSlot(e.target.value)} placeholder="e.g. 7:00 PM" className="bg-gray-800 border-gray-700 text-white" />
+                <Select value={timeSlot} onValueChange={setTimeSlot}>
+                  <SelectTrigger className="bg-gray-800 border-gray-700 text-white">
+                    <SelectValue placeholder="Select time slot" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {timeSlotOptions.map((ts: string) => (
+                      <SelectItem key={ts} value={ts}>{ts}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <Label>Reason</Label>
@@ -211,6 +233,9 @@ export default function CustomerTicketsPage() {
                 <div className="flex gap-2">
                   <Input value={searchPhone} onChange={(e) => setSearchPhone(e.target.value)} placeholder="e.g. 9876543210" className="bg-gray-800 border-gray-700 text-white" />
                   <Button variant="secondary" onClick={() => { setPage(1); queryClient.invalidateQueries({ queryKey: ["/api/tickets"] }); }}><Search className="w-4 h-4" /></Button>
+                  <Button variant="outline" onClick={() => { setSearchPhone(''); setFilterReason('all'); setDateFrom(''); setDateTo(''); setTimeSlotFilter('all'); setPage(1); queryClient.invalidateQueries({ queryKey: ["/api/tickets"] }); }}>
+                    <X className="w-4 h-4 mr-1" /> Clear
+                  </Button>
                 </div>
               </div>
               <div>
@@ -233,7 +258,7 @@ export default function CustomerTicketsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All</SelectItem>
-                    {['10:00 AM','1:00 PM','4:00 PM','7:00 PM','8:15 PM','11:00 PM'].map(ts => (
+                    {timeSlotOptions.map(ts => (
                       <SelectItem key={ts} value={ts}>{ts}</SelectItem>
                     ))}
                   </SelectContent>

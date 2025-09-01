@@ -21,6 +21,17 @@ export function initializeDatabase() {
     if (!info.some((c) => c.name === 'paid_upi')) {
       sqlite.exec(`ALTER TABLE expenses ADD COLUMN paid_upi REAL`);
     }
+    if (!info.some((c) => c.name === 'paid_via')) {
+      sqlite.exec(`ALTER TABLE expenses ADD COLUMN paid_via TEXT`);
+    }
+  } catch {}
+
+  // Ensure users has active column
+  try {
+    const uInfo = sqlite.prepare(`PRAGMA table_info(users)`).all() as any[];
+    if (!uInfo.some(c => c.name === 'active')) {
+      sqlite.exec(`ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1`);
+    }
   } catch {}
 
   // Ensure bookings has refund columns (for existing DBs)
@@ -104,6 +115,7 @@ export function initializeDatabase() {
       creator_name TEXT,
       paid_cash REAL,
       paid_upi REAL,
+      paid_via TEXT,
       created_by TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -180,6 +192,26 @@ export function initializeDatabase() {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       deleted_at DATETIME,
       FOREIGN KEY (booking_id) REFERENCES bookings(id),
+      FOREIGN KEY (created_by) REFERENCES users(id)
+    );
+
+    -- Lead Infos table
+    CREATE TABLE IF NOT EXISTS lead_infos (
+      id TEXT PRIMARY KEY DEFAULT (
+        hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
+        substr(hex(randomblob(2)),2) || '-' ||
+        substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6))
+      ),
+      date TEXT NOT NULL,
+      shift TEXT NOT NULL,
+      source TEXT NOT NULL,
+      total_leads INTEGER NOT NULL DEFAULT 0,
+      good_leads INTEGER NOT NULL DEFAULT 0,
+      bad_leads INTEGER NOT NULL DEFAULT 0,
+      calls_made INTEGER NOT NULL DEFAULT 0,
+      description TEXT,
+      created_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (created_by) REFERENCES users(id)
     );
 
@@ -261,6 +293,25 @@ export function initializeDatabase() {
       expire DATETIME NOT NULL
     );
 
+    -- Login tracker table
+    CREATE TABLE IF NOT EXISTS login_tracker (
+      id TEXT PRIMARY KEY DEFAULT (
+        hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
+        substr(hex(randomblob(2)),2) || '-' ||
+        substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6))
+      ),
+      user_id TEXT NOT NULL,
+      email TEXT,
+      login_time TEXT NOT NULL,
+      logout_time TEXT,
+      session_duration_sec INTEGER,
+      device_type TEXT,
+      user_agent TEXT,
+      ip_address TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
     CREATE TABLE IF NOT EXISTS calendar_events (
       id TEXT PRIMARY KEY,
       booking_id TEXT NOT NULL,
@@ -287,6 +338,21 @@ export function initializeDatabase() {
       avg_booking_value REAL DEFAULT 0,
       created_by TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (created_by) REFERENCES users(id)
+    );
+
+    -- Revenue goals (monthly)
+    CREATE TABLE IF NOT EXISTS revenue_goals (
+      id TEXT PRIMARY KEY DEFAULT (
+        hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
+        substr(hex(randomblob(2)),2) || '-' ||
+        substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6))
+      ),
+      month TEXT NOT NULL,
+      goal_amount INTEGER NOT NULL,
+      created_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (created_by) REFERENCES users(id)
     );
 
