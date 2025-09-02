@@ -37,8 +37,14 @@ function Router() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-900 text-white">
-        <div className="text-lg">Loading ROSAE Theatre Management...</div>
+      <div className="min-h-screen bg-gradient-to-br from-neutral-950 via-neutral-900 to-neutral-800 flex items-center justify-center">
+        <div className="flex flex-col items-center">
+          <div className="relative">
+            <div className="w-20 h-20 rounded-full border-4 border-neutral-700 border-t-rosae-red animate-spin" />
+            <img src="/rosae-logo.jpg" alt="ROSAE" className="w-8 h-8 rounded absolute inset-0 m-auto shadow" />
+          </div>
+          <p className="mt-4 text-neutral-400 text-sm tracking-wide">Please wait…</p>
+        </div>
       </div>
     );
   }

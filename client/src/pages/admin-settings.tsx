@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Plus, X, Edit, Save, Loader2 } from "lucide-react";
@@ -32,6 +33,7 @@ export default function AdminSettings() {
   const [timeSlots, setTimeSlots] = useState<string[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<string[]>([]);
   const [expenseCreators, setExpenseCreators] = useState<string[]>([]);
+  const [integrationSettings, setIntegrationSettings] = useState<{ calendarSyncEnabled: boolean; calendarId?: string; syncWindowDays?: number }>({ calendarSyncEnabled: true, calendarId: 'primary', syncWindowDays: 30 });
   
   // Fetch configuration from API
   const { data: configData, isLoading: isConfigLoading, error: configError } = useQuery({
@@ -71,12 +73,13 @@ export default function AdminSettings() {
       setTimeSlots(configData.timeSlots || []);
       setExpenseCategories(configData.expenseCategories || []);
       setExpenseCreators(configData.expenseCreators || []);
+      setIntegrationSettings(configData.integrationSettings || { calendarSyncEnabled: true, calendarId: 'primary', syncWindowDays: 30 });
     }
   }, [configData]);
   
   // Mutation to update configuration
   const updateConfigMutation = useMutation({
-    mutationFn: async (data: { theatres: string[], timeSlots: string[], expenseCategories: string[], expenseCreators: string[] }) => {
+    mutationFn: async (data: { theatres: string[], timeSlots: string[], expenseCategories: string[], expenseCreators: string[], integrationSettings?: any }) => {
       const res = await apiRequest("POST", "/api/config", data);
       return await res.json();
     },
@@ -86,6 +89,7 @@ export default function AdminSettings() {
        setTimeSlots(data.timeSlots || []);
        setExpenseCategories(data.expenseCategories || []);
        setExpenseCreators(data.expenseCreators || []);
+       setIntegrationSettings(data.integrationSettings || { calendarSyncEnabled: true, calendarId: 'primary', syncWindowDays: 30 });
       
       toast({
         title: "Success",
@@ -136,7 +140,8 @@ export default function AdminSettings() {
     }
     
     // Check if user is admin
-    if (!isLoading && isAuthenticated && user?.role !== "admin") {
+    const isAdmin = user?.role === "admin" || (user as any)?.email === "admin@rosae.com";
+    if (!isLoading && isAuthenticated && !isAdmin) {
       toast({
         title: "Access Denied",
         description: "You don't have permission to access this page",
@@ -152,28 +157,28 @@ export default function AdminSettings() {
     const { name } = data;
     
     // Add to the appropriate list based on active tab
-    let updatedConfig: any = {};
+    let updatedConfig: any = { integrationSettings };
     
     switch (activeTab) {
       case "theaters":
         const updatedTheaters = [...theatres, name];
         setTheatres(updatedTheaters);
-        updatedConfig = { theatres: updatedTheaters, timeSlots, expenseCategories, expenseCreators };
+        updatedConfig = { theatres: updatedTheaters, timeSlots, expenseCategories, expenseCreators, integrationSettings };
         break;
       case "timeSlots":
         const updatedTimeSlots = [...timeSlots, name];
         setTimeSlots(updatedTimeSlots);
-        updatedConfig = { theatres: theatres, timeSlots: updatedTimeSlots, expenseCategories, expenseCreators };
+        updatedConfig = { theatres: theatres, timeSlots: updatedTimeSlots, expenseCategories, expenseCreators, integrationSettings };
         break;
       case "expenseCategories":
         const updatedExpenseCategories = [...expenseCategories, name];
         setExpenseCategories(updatedExpenseCategories);
-        updatedConfig = { theatres: theatres, timeSlots, expenseCategories: updatedExpenseCategories, expenseCreators };
+        updatedConfig = { theatres: theatres, timeSlots, expenseCategories: updatedExpenseCategories, expenseCreators, integrationSettings };
         break;
       case "expenseCreators":
         const updatedExpenseCreators = [...expenseCreators, name];
         setExpenseCreators(updatedExpenseCreators);
-        updatedConfig = { theatres: theatres, timeSlots, expenseCategories, expenseCreators: updatedExpenseCreators };
+        updatedConfig = { theatres: theatres, timeSlots, expenseCategories, expenseCreators: updatedExpenseCreators, integrationSettings };
         break;
     }
     
@@ -186,28 +191,28 @@ export default function AdminSettings() {
   };
 
   const handleDeleteItem = (type: string, index: number) => {
-    let updatedConfig: any = {};
+    let updatedConfig: any = { integrationSettings };
     
     switch (type) {
       case "theaters":
         const updatedTheaters = theatres.filter((_, i) => i !== index);
         setTheatres(updatedTheaters);
-        updatedConfig = { theatres: updatedTheaters, timeSlots, expenseCategories, expenseCreators };
+        updatedConfig = { theatres: updatedTheaters, timeSlots, expenseCategories, expenseCreators, integrationSettings };
         break;
       case "timeSlots":
         const updatedTimeSlots = timeSlots.filter((_, i) => i !== index);
         setTimeSlots(updatedTimeSlots);
-        updatedConfig = { theatres: theatres, timeSlots: updatedTimeSlots, expenseCategories, expenseCreators };
+        updatedConfig = { theatres: theatres, timeSlots: updatedTimeSlots, expenseCategories, expenseCreators, integrationSettings };
         break;
       case "expenseCategories":
         const updatedExpenseCategories = expenseCategories.filter((_, i) => i !== index);
         setExpenseCategories(updatedExpenseCategories);
-        updatedConfig = { theatres: theatres, timeSlots, expenseCategories: updatedExpenseCategories, expenseCreators };
+        updatedConfig = { theatres: theatres, timeSlots, expenseCategories: updatedExpenseCategories, expenseCreators, integrationSettings };
         break;
       case "expenseCreators":
         const updatedExpenseCreators = expenseCreators.filter((_, i) => i !== index);
         setExpenseCreators(updatedExpenseCreators);
-        updatedConfig = { theatres: theatres, timeSlots, expenseCategories, expenseCreators: updatedExpenseCreators };
+        updatedConfig = { theatres: theatres, timeSlots, expenseCategories, expenseCreators: updatedExpenseCreators, integrationSettings };
         break;
     }
     
@@ -266,6 +271,7 @@ export default function AdminSettings() {
                   <TabsTrigger value="timeSlots" className="data-[state=active]:bg-rosae-red">Time Slots</TabsTrigger>
                   <TabsTrigger value="expenseCategories" className="data-[state=active]:bg-rosae-red">Expense Categories</TabsTrigger>
                   <TabsTrigger value="expenseCreators" className="data-[state=active]:bg-rosae-red">Expense Creators</TabsTrigger>
+                  <TabsTrigger value="integrations" className="data-[state=active]:bg-rosae-red">Integrations</TabsTrigger>
                 </TabsList>
                 
                 <TabsContent value="theaters" className="mt-6">
@@ -505,6 +511,75 @@ export default function AdminSettings() {
                         </Button>
                       </div>
                     ))}
+                  </div>
+                </TabsContent>
+
+                {/* Integrations tab */}
+                <TabsContent value="integrations" className="mt-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div className="lg:col-span-2 space-y-6">
+                      <Card className="bg-gray-800 border-gray-600">
+                        <CardHeader>
+                          <CardTitle className="text-white">Google Calendar Sync</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-5 text-white">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="font-medium">Enable scheduler</p>
+                              <p className="text-sm text-gray-400">When enabled, the sync task can run every 3 minutes via Windows Task Scheduler</p>
+                            </div>
+                            <Switch
+                              checked={!!integrationSettings?.calendarSyncEnabled}
+                              onCheckedChange={(checked) => setIntegrationSettings((prev) => ({ ...prev, calendarSyncEnabled: checked }))}
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <Label htmlFor="calendarId" className="text-gray-300">Calendar ID</Label>
+                              <Input
+                                id="calendarId"
+                                className="bg-gray-700 border-gray-600 text-white"
+                                value={integrationSettings?.calendarId || ""}
+                                onChange={(e) => setIntegrationSettings((prev) => ({ ...prev, calendarId: e.target.value }))}
+                                placeholder="primary or your_calendar_id@group.calendar.google.com"
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor="syncDays" className="text-gray-300">Sync window (days)</Label>
+                              <Input
+                                id="syncDays"
+                                type="number"
+                                min={1}
+                                className="bg-gray-700 border-gray-600 text-white"
+                                value={integrationSettings?.syncWindowDays ?? 30}
+                                onChange={(e) => setIntegrationSettings((prev) => ({ ...prev, syncWindowDays: Math.max(1, Number(e.target.value || 30)) }))}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex justify-end">
+                            <Button
+                              onClick={() => updateConfigMutation.mutate({ theatres, timeSlots, expenseCategories, expenseCreators, integrationSettings })}
+                              className="bg-rosae-red hover:bg-rosae-dark-red"
+                            >
+                              Save Integrations
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    <div className="lg:col-span-1">
+                      <Card className="bg-gray-800 border-gray-600 overflow-hidden">
+                        <CardHeader>
+                          <CardTitle className="text-white">ROSAE</CardTitle>
+                        </CardHeader>
+                        <CardContent className="flex items-center justify-center p-6">
+                          <img src="/rosae-logo.jpg" alt="ROSAE" className="rounded-md max-h-40 object-contain" />
+                        </CardContent>
+                      </Card>
+                    </div>
                   </div>
                 </TabsContent>
               </Tabs>

@@ -110,6 +110,11 @@ export const storage = {
       .set({ active: false, updatedAt: sql`(CURRENT_TIMESTAMP)` })
       .where(eq(users.id, userId));
   },
+
+  // List all users (used by webhook and admin pages)
+  async getAllUsers() {
+    return db.query.users.findMany({ orderBy: [asc(users.firstName)] });
+  },
   
   // Booking operations
   async createBooking(bookingData: any) {
@@ -184,6 +189,51 @@ export const storage = {
     const token = randomUUID();
     const row = (await db.insert(reviews).values({ bookingId, name, phone, token, status: 'pending' }).returning())[0];
     return row;
+  },
+
+  // Follow-ups operations
+  async listFollowUps(params: { type?: string; status?: string } = {}) {
+    const parts: any[] = [];
+    if (params.type) parts.push(eq(followUps.type as any, params.type as any));
+    if (params.status) parts.push(eq(followUps.status as any, params.status as any));
+    const whereClause = parts.length ? and(...parts) : undefined;
+    return db.query.followUps.findMany({ where: whereClause, orderBy: [desc(followUps.createdAt as any)] });
+  },
+
+  async createFollowUp(data: { bookingId?: string | null; customerName: string; phoneNumber: string; followUpDate: string; note: string; category?: string; type?: string; createdBy?: string }) {
+    const resolvedType = (data.type || data.category || 'feedback') as any; // prefer explicit type, default to 'feedback'
+    const row = (await db.insert(followUps).values({
+      bookingId: data.bookingId || null,
+      customerName: data.customerName,
+      phoneNumber: data.phoneNumber,
+      reason: data.note,
+      type: resolvedType,
+      status: 'pending' as any,
+      dueAt: data.followUpDate,
+      createdBy: data.createdBy || null,
+    }).returning())[0];
+    return row;
+  },
+
+  async markFollowUpCompleted(id: string) {
+    const row = (await db.update(followUps)
+      .set({ status: 'completed' as any, completedAt: new Date().toISOString(), updatedAt: sql`(CURRENT_TIMESTAMP)` })
+      .where(eq(followUps.id, id))
+      .returning())[0];
+    return row;
+  },
+
+  async cancelFollowUp(id: string) {
+    const row = (await db.update(followUps)
+      .set({ status: 'cancelled' as any, updatedAt: sql`(CURRENT_TIMESTAMP)` })
+      .where(eq(followUps.id, id))
+      .returning())[0];
+    return row;
+  },
+
+  async deleteFollowUp(id: string) {
+    await db.delete(followUps).where(eq(followUps.id, id));
+    return { ok: true };
   },
 
   async getReviewByToken(token: string) {
@@ -1519,7 +1569,8 @@ export const storage = {
       theatres: ['Theatre 1', 'Theatre 2', 'Theatre 3'],
       timeSlots: ['10:00 AM', '1:00 PM', '4:00 PM', '7:00 PM'],
       expenseCategories: ['Utilities', 'Maintenance', 'Staff Salaries', 'Equipment', 'Marketing', 'Rent', 'Supplies', 'Insurance', 'Other'],
-      expenseCreators: ['Kumar', 'Rahul', 'Priya', 'Amit', 'Sneha']
+      expenseCreators: ['Kumar', 'Rahul', 'Priya', 'Amit', 'Sneha'],
+      integrationSettings: { calendarSyncEnabled: true, calendarId: 'primary', syncWindowDays: 30 }
     };
     
     try {
@@ -1542,12 +1593,18 @@ export const storage = {
       const expenseCreatorsConfig = await db.query.configurations.findFirst({
         where: eq(configurations.key, 'expenseCreators')
       });
+
+      // Get integration settings
+      const integrationSettingsConfig = await db.query.configurations.findFirst({
+        where: eq(configurations.key, 'integrationSettings')
+      });
       
       return {
         theatres: theatresConfig ? JSON.parse(theatresConfig.value) : defaultConfig.theatres,
         timeSlots: timeSlotsConfig ? JSON.parse(timeSlotsConfig.value) : defaultConfig.timeSlots,
         expenseCategories: expenseCategoriesConfig ? JSON.parse(expenseCategoriesConfig.value) : defaultConfig.expenseCategories,
-        expenseCreators: expenseCreatorsConfig ? JSON.parse(expenseCreatorsConfig.value) : defaultConfig.expenseCreators
+        expenseCreators: expenseCreatorsConfig ? JSON.parse(expenseCreatorsConfig.value) : defaultConfig.expenseCreators,
+        integrationSettings: integrationSettingsConfig ? JSON.parse(integrationSettingsConfig.value) : defaultConfig.integrationSettings
       };
     } catch (error) {
       console.error('Error fetching configuration:', error);
@@ -1555,7 +1612,7 @@ export const storage = {
     }
   },
   
-  async updateConfig({ theatres, timeSlots, expenseCategories, expenseCreators }: { theatres: string[], timeSlots: string[], expenseCategories?: string[], expenseCreators?: string[] }, userId: string) {
+  async updateConfig({ theatres, timeSlots, expenseCategories, expenseCreators, integrationSettings }: { theatres: string[], timeSlots: string[], expenseCategories?: string[], expenseCreators?: string[], integrationSettings?: any }, userId: string) {
     try {
       // Update theatres configuration
       await db.insert(configurations)
@@ -1624,8 +1681,26 @@ export const storage = {
             }
           });
       }
+
+      // Update integration settings if provided
+      if (integrationSettings) {
+        await db.insert(configurations)
+          .values({
+            key: 'integrationSettings',
+            value: JSON.stringify(integrationSettings),
+            updatedBy: userId
+          })
+          .onConflictDoUpdate({
+            target: configurations.key,
+            set: {
+              value: JSON.stringify(integrationSettings),
+              updatedBy: userId,
+              updatedAt: sql`(CURRENT_TIMESTAMP)`
+            }
+          });
+      }
       
-      return { theatres, timeSlots, expenseCategories, expenseCreators };
+      return { theatres, timeSlots, expenseCategories, expenseCreators, integrationSettings };
     } catch (error) {
       console.error('Error updating configuration:', error);
       throw error;

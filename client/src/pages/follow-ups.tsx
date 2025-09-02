@@ -85,7 +85,7 @@ export default function FollowUps() {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch(`/api/follow-ups?type=feedback`);
+        const res = await fetch(`/api/follow-ups?type=feedback&ts=${Date.now()}` , { credentials: 'include', cache: 'no-store', headers: { 'Cache-Control': 'no-store' } });
         const data = await res.json();
         const rows = Array.isArray(data?.rows) ? data.rows : [];
         // Map server rows to UI FollowUp shape
@@ -139,39 +139,36 @@ export default function FollowUps() {
     setCurrentPage(1);
   }, [followUps, searchTerm, statusFilter, priorityFilter]);
 
-  const addFollowUp = () => {
+  const addFollowUp = async () => {
     if (!newFollowUp.customerName || !newFollowUp.phoneNumber || !newFollowUp.followUpDate || !newFollowUp.note) {
-      toast({
-        title: "Missing Information",
-        description: "Please fill in all required fields",
-        variant: "destructive"
-      });
+      toast({ title: "Missing Information", description: "Please fill in all required fields", variant: "destructive" });
       return;
     }
-
-    const followUp: FollowUp = {
-      id: Date.now(),
-      ...newFollowUp,
-      status: "pending",
-      createdBy: user?.firstName || "User",
-      createdAt: new Date().toISOString()
-    };
-
-    setFollowUps([followUp, ...followUps]);
-    setNewFollowUp({
-      customerName: "",
-      phoneNumber: "",
-      followUpDate: "",
-      priority: "medium",
-      note: "",
-      category: "general"
-    });
-    setIsAddingFollowUp(false);
-
-    toast({
-      title: "Follow-up Added",
-      description: "Follow-up has been scheduled successfully",
-    });
+    try {
+      const res = await fetch('/api/follow-ups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          customerName: newFollowUp.customerName,
+          phoneNumber: newFollowUp.phoneNumber,
+          followUpDate: newFollowUp.followUpDate,
+          note: newFollowUp.note,
+          category: newFollowUp.category,
+          type: 'feedback', // ensure it appears in the feedback list
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to create follow-up');
+      const created = await res.json();
+      // Prepend server-created row
+      setFollowUps([{ id: created.id, customerName: created.customerName, phoneNumber: created.phoneNumber, followUpDate: created.dueAt, priority: newFollowUp.priority, status: created.status, note: created.reason, createdBy: user?.firstName || 'User', createdAt: created.createdAt, category: created.type }, ...followUps]);
+      setFilteredFollowUps((prev) => [{ id: created.id, customerName: created.customerName, phoneNumber: created.phoneNumber, followUpDate: created.dueAt, priority: newFollowUp.priority, status: created.status, note: created.reason, createdBy: user?.firstName || 'User', createdAt: created.createdAt, category: created.type }, ...prev]);
+      setNewFollowUp({ customerName: "", phoneNumber: "", followUpDate: "", priority: "medium", note: "", category: "general" });
+      setIsAddingFollowUp(false);
+      toast({ title: "Follow-up Added", description: "Follow-up has been scheduled successfully" });
+    } catch (e: any) {
+      toast({ title: 'Failed', description: e?.message || 'Could not create follow-up', variant: 'destructive' });
+    }
   };
 
   const updateFollowUpStatus = async (id: any, status: FollowUp['status']) => {
@@ -225,12 +222,16 @@ export default function FollowUps() {
     }
   };
 
-  const deleteFollowUp = (id: number) => {
-    setFollowUps(followUps.filter(followUp => followUp.id !== id));
-    toast({
-      title: "Follow-up Deleted",
-      description: "Follow-up has been removed",
-    });
+  const deleteFollowUp = async (id: any) => {
+    try {
+      const res = await fetch(`/api/follow-ups/${id}`, { method: 'DELETE', credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to delete');
+      setFollowUps(followUps.filter(f => String(f.id) !== String(id)));
+      setFilteredFollowUps(prev => prev.filter(f => String(f.id) !== String(id)));
+      toast({ title: 'Follow-up Deleted', description: 'Follow-up has been removed' });
+    } catch (e: any) {
+      toast({ title: 'Delete failed', description: e?.message || 'Could not delete', variant: 'destructive' });
+    }
   };
 
   const openWhatsApp = (phoneNumber: string) => {

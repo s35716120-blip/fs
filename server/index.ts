@@ -28,7 +28,7 @@ try {
 } catch {}
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false }));
 
 app.use((req, res, next) => {
@@ -65,6 +65,9 @@ app.use((req, res, next) => {
   // Initialize SQLite database
   initializeDatabase();
   
+  // Register webhook endpoints early
+  try { const { registerWebhookRoutes } = await import('./routes'); registerWebhookRoutes(app); } catch {}
+
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

@@ -12,6 +12,72 @@ import {
 } from "@shared/schema";
 import session from "express-session";
 import bcrypt from "bcryptjs";
+import { syncGoogleCalendarToBookings } from "./jobs/sync-google-calendar";
+
+// Receiver: Google Calendar push or custom webhook to create bookings
+// POST /api/webhooks/booking { title, startTime, endTime, theatreName?, guests?, customerName?, phoneNumber? }
+export function registerWebhookRoutes(app: Express) {
+  app.post('/api/webhooks/booking', async (req: any, res) => {
+    try {
+      const body = req.body || {};
+      const startIso = body.startTime;
+      const endIso = body.endTime;
+      if (!startIso || !endIso) return res.status(400).json({ message: 'startTime and endTime required' });
+
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const start = new Date(startIso);
+      const end = new Date(endIso);
+      const bookingDate = `${start.getFullYear()}-${pad(start.getMonth()+1)}-${pad(start.getDate())}`;
+      const timeSlot = `${pad(start.getHours())}:${pad(start.getMinutes())}-${pad(end.getHours())}:${pad(end.getMinutes())}`;
+
+      // Optional mapping from title if provided
+      let theatreName = body.theatreName || 'Screen-1';
+      let guests = typeof body.guests === 'number' ? body.guests : 2;
+      let customerName = body.customerName || 'Walk-in';
+      let phoneNumber = body.phoneNumber || undefined;
+
+      if (body.title && !body.theatreName) {
+        try {
+          const parts = String(body.title).split(' - ').map((s: string) => s.trim());
+          if (parts[0]) theatreName = parts[0];
+          if (parts[1] && /\d+/.test(parts[1])) guests = parseInt(parts[1].match(/\d+/)![0], 10);
+          if (parts[2] && !body.customerName) {
+            customerName = parts[2].replace(/\((.*?)\)/, (m: any, p1: string) => { phoneNumber = phoneNumber || p1; return ''.trim(); }).trim();
+          }
+        } catch {}
+      }
+
+      // Deduplicate if phone provided
+      if (phoneNumber) {
+        const exists = await storage.getBookingByPhoneDateAndSlot(phoneNumber, bookingDate, timeSlot);
+        if (exists) return res.json({ ok: true, deduped: true, bookingId: exists.id });
+      }
+
+      const booking = await storage.createBooking({
+        theatreName,
+        timeSlot,
+        guests,
+        customerName,
+        phoneNumber,
+        totalAmount: 0,
+        cashAmount: 0,
+        upiAmount: 0,
+        snacksAmount: 0,
+        snacksCash: 0,
+        snacksUpi: 0,
+        bookingDate,
+        isEighteenPlus: true,
+        visited: true,
+        repeatCount: 0,
+        createdBy: null,
+      });
+      res.json({ ok: true, booking });
+    } catch (e) {
+      console.error('booking webhook error', e);
+      res.status(500).json({ ok: false });
+    }
+  });
+}
 
 // Calendar webhook helper function
 async function createCalendarEvent(booking: Booking) {
@@ -36,7 +102,20 @@ async function createCalendarEvent(booking: Booking) {
     location: booking.theatreName,
   };
 
-  return await storage.createCalendarEvent(calendarEvent);
+  const created = await storage.createCalendarEvent(calendarEvent);
+
+  // Notify external calendar integration (include phone explicitly)
+  try {
+    await sendWebhookNotification("create", {
+      bookingId: booking.id,
+      eventData: {
+        ...calendarEvent,
+        phoneNumber: booking.phoneNumber || null,
+      },
+    });
+  } catch {}
+
+  return created;
 }
 
 // Webhook endpoint for calendar integration
@@ -45,6 +124,8 @@ async function sendWebhookNotification(action: string, data: any) {
   // For now, we'll just log the webhook data
   console.log(`Calendar webhook: ${action}`, data);
 }
+
+
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Set up session middleware
@@ -795,6 +876,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Manual Google Calendar sync route (any authenticated user)
+  app.post("/api/calendar/sync", isAuthenticated, async (req: any, res) => {
+    try {
+      const { calendarId, timeMin, timeMax } = req.body || {};
+      const result = await syncGoogleCalendarToBookings({ calendarId, timeMin, timeMax });
+      return res.json({ ok: true, ...result });
+    } catch (e: any) {
+      console.error("manual calendar sync failed", e);
+      return res.status(500).json({ ok: false, message: e?.message || "Sync failed" });
+    }
+  });
+
   // Configuration management routes
   app.get("/api/config", async (req, res) => {
     try {
@@ -822,10 +915,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .json({ message: "Only admins can update configuration" });
       }
 
-      const { theatres, timeSlots, expenseCategories, expenseCreators } = req.body;
+      const { theatres, timeSlots, expenseCategories, expenseCreators, integrationSettings } = req.body;
       const userId = currentUser.claims.sub;
       const config = await storage.updateConfig(
-        { theatres, timeSlots, expenseCategories, expenseCreators },
+        { theatres, timeSlots, expenseCategories, expenseCreators, integrationSettings },
         userId,
       );
       res.json(config);
@@ -2062,6 +2155,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/follow-ups", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const body = req.body || {};
+      const created = await storage.createFollowUp({
+        bookingId: body.bookingId || null,
+        customerName: String(body.customerName || ''),
+        phoneNumber: String(body.phoneNumber || ''),
+        followUpDate: String(body.followUpDate || ''),
+        note: String(body.note || ''),
+        category: body.category || body.type || 'general',
+        type: body.type || undefined,
+        createdBy: userId,
+      });
+      res.status(201).json(created);
+    } catch (error) {
+      console.error("Error creating follow-up:", error);
+      res.status(500).json({ message: "Failed to create follow-up" });
+    }
+  });
+
   app.patch("/api/follow-ups/:id", isAuthenticated, async (req, res) => {
     try {
       const { id } = req.params as any;
@@ -2085,6 +2199,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating follow-up:", error);
       res.status(500).json({ message: "Failed to update follow-up" });
+    }
+  });
+
+  app.delete("/api/follow-ups/:id", isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params as any;
+      await storage.deleteFollowUp(id);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error deleting follow-up:", error);
+      res.status(500).json({ message: "Failed to delete follow-up" });
     }
   });
 
@@ -2335,19 +2460,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .json({ message: "Snacks cash + UPI must equal snacks amount" });
       }
 
-      // Get the first admin user to use as creator for webhook bookings
-      const adminUsers = await storage.getAllUsers();
-      const adminUser = adminUsers.find((user) => user.role === "admin");
+      // Get an admin user to set as creator for webhook bookings
+      let adminUsers = await storage.getAllUsers();
+      let adminUser = adminUsers.find((user: any) => user.role === "admin");
 
       if (!adminUser) {
-        return res
-          .status(500)
-          .json({ message: "No admin user found to create booking" });
+        // Create a default admin if none exists
+        const defaultAdmin = {
+          id: "admin-001",
+          email: "admin@rosae.com",
+          firstName: "Admin",
+          lastName: "User",
+          profileImageUrl: null,
+          role: "admin",
+          active: true,
+        } as any;
+        adminUser = await storage.upsertUser(defaultAdmin);
       }
 
       const booking = await storage.createBooking({
         ...bookingData,
-        createdBy: adminUser.id,
+        createdBy: (adminUser as any).id,
       } as any);
 
       // Create calendar event
@@ -2584,6 +2717,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             title: `${updatedBooking.theatreName} Booking - ${updatedBooking.guests} guests`,
             description: `Theatre booking for ${updatedBooking.guests} guests. Total: ₹${updatedBooking.totalAmount}.${phoneInfo} Updated by: ${userId}`,
           });
+
+          // Notify external calendar integration about update (include phone)
+          try {
+            await sendWebhookNotification("update", {
+              bookingId: id,
+              eventData: {
+                title: `${updatedBooking.theatreName} Booking - ${updatedBooking.guests} guests`,
+                description: `Theatre booking for ${updatedBooking.guests} guests. Total: ₹${updatedBooking.totalAmount}.${phoneInfo} Updated by: ${userId}`,
+                phoneNumber: updatedBooking.phoneNumber || null,
+              },
+            });
+          } catch {}
         }
       } catch (calendarError) {
         console.error("Failed to update calendar event:", calendarError);
@@ -2626,6 +2771,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           bookingId: id,
           reason,
           comment,
+          // include last-known phone for downstream cleanup (if present)
+          phoneNumber: (calendarEvent as any)?.description?.match(/Phone:\s*(\+?\d+)/)?.[1] || null,
         });
       } catch (calendarError) {
         console.error("Failed to delete calendar event:", calendarError);

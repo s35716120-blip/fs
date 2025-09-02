@@ -252,24 +252,9 @@ export default function CRM() {
   };
 
   // Load customer notes
+  // Removed default/mock notes; start with empty, user can add as needed
   const loadCustomerNotes = (phone: string) => {
-    const mockNotes = [
-      {
-        id: 1,
-        date: new Date().toISOString(),
-        category: "general",
-        note: "Customer prefers evening shows",
-        author: user?.firstName || "System"
-      },
-      {
-        id: 2,
-        date: new Date(Date.now() - 86400000).toISOString(),
-        category: "preference",
-        note: "Likes action movies, usually books for 2-3 people",
-        author: "Admin"
-      }
-    ];
-    setCustomerNotes(mockNotes);
+    setCustomerNotes([]);
   };
 
   // Update booking mutation
@@ -692,7 +677,7 @@ export default function CRM() {
                     </div>
                     <div>
                       <CardTitle className="text-white text-xl">
-                        {selectedBooking.customerName || 'Customer Profile'}
+                        {(() => { const name = selectedBooking.customerName || 'Customer Profile'; const idx = name.toLowerCase().indexOf('paid'); return idx > 0 ? name.slice(0, idx).trim() : name; })()}
                       </CardTitle>
                       <p className="text-gray-400">{selectedBooking.phoneNumber}</p>
                     </div>
@@ -796,7 +781,7 @@ export default function CRM() {
                             className="bg-gray-800 border-gray-600 text-white"
                           />
                         ) : (
-                          <p className="text-white">{selectedBooking.customerName || 'N/A'}</p>
+                          <p className="text-white">{(() => { const name = selectedBooking.customerName || 'N/A'; const idx = name.toLowerCase().indexOf('paid'); return idx > 0 ? name.slice(0, idx).trim() : name; })()}</p>
                         )}
                       </div>
 

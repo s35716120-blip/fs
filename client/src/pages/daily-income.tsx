@@ -819,11 +819,11 @@ export default function DailyIncomePage() {
 
             {/* Pagination controls */}
             {enhancedRecords.length > 0 && (
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-4 py-3 text-gray-300">
-                <div>
-                  Showing {startIndex + 1}-{Math.min(endIndex, enhancedRecords.length)} of {enhancedRecords.length} entries
-                </div>
-                <div className="flex items-center gap-3">
+              <div className="flex flex-col gap-3 items-stretch justify-between px-4 py-3 text-gray-300">
+                <div className="flex items-center justify-between">
+                  <div>
+                    Showing {startIndex + 1}-{Math.min(endIndex, enhancedRecords.length)} of {enhancedRecords.length} entries
+                  </div>
                   <div className="flex items-center gap-2 text-sm">
                     <span className="text-gray-400">Rows per page:</span>
                     <select
@@ -840,10 +840,51 @@ export default function DailyIncomePage() {
                       <option value={50}>50</option>
                     </select>
                   </div>
+                </div>
+                <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
+                    <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={currentPage === 1} onClick={() => setCurrentPage(1)}>First</Button>
                     <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={currentPage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>Previous</Button>
-                    <span>Page {currentPage} of {totalPages}</span>
+                    <div className="flex items-center gap-1">
+                      {(() => {
+                        const maxVisible = 5;
+                        let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+                        let end = Math.min(totalPages, start + maxVisible - 1);
+                        if (end - start + 1 < maxVisible) start = Math.max(1, end - maxVisible + 1);
+                        const buttons: any[] = [];
+                        if (start > 1) {
+                          buttons.push(<Button key={1} variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" onClick={() => setCurrentPage(1)}>1</Button>);
+                          if (start > 2) buttons.push(<span key="e1" className="text-gray-400 px-2">...</span>);
+                        }
+                        for (let i = start; i <= end; i++) {
+                          buttons.push(
+                            <Button key={i} variant={i === currentPage ? 'default' : 'outline'} className={i === currentPage ? 'bg-rosae-red hover:bg-rosae-dark-red' : 'border-gray-600 text-gray-300 hover:bg-gray-700'} onClick={() => setCurrentPage(i)}>{i}</Button>
+                          );
+                        }
+                        if (end < totalPages) {
+                          if (end < totalPages - 1) buttons.push(<span key="e2" className="text-gray-400 px-2">...</span>);
+                          buttons.push(<Button key={totalPages} variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" onClick={() => setCurrentPage(totalPages)}>{totalPages}</Button>);
+                        }
+                        return buttons;
+                      })()}
+                    </div>
                     <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>Next</Button>
+                    <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={currentPage === totalPages} onClick={() => setCurrentPage(totalPages)}>Last</Button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-400">Go to page:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={totalPages}
+                      value={currentPage}
+                      onChange={(e) => {
+                        const v = Math.max(1, Math.min(totalPages, Number(e.target.value) || 1));
+                        setCurrentPage(v);
+                      }}
+                      className="bg-gray-800 border border-gray-600 text-white text-sm rounded px-2 py-1 w-16 text-center"
+                    />
+                    <span className="text-sm text-gray-400">of {totalPages}</span>
                   </div>
                 </div>
               </div>

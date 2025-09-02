@@ -326,24 +326,68 @@ export default function CustomerTicketsPage() {
               </table>
             </div>
 
-            <div className="flex items-center justify-between mt-4">
-              <div className="text-sm text-gray-300">
-                Total: {data?.pagination.total || 0}
+            <div className="flex flex-col gap-3 items-stretch justify-between mt-4">
+              <div className="flex items-center justify-between text-gray-300">
+                <div className="text-sm">Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, data?.pagination.total || 0)} of {data?.pagination.total || 0} entries</div>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-gray-400">Per page:</span>
+                  <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+                    <SelectTrigger className="w-[90px] bg-gray-800 border-gray-700 text-white">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[10, 20, 50, 100].map(s => <SelectItem key={s} value={String(s)}>{s}/page</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Prev</Button>
-                <span>
-                  Page {data?.pagination.page || page} / {data?.pagination.totalPages || 1}
-                </span>
-                <Button variant="outline" disabled={!data || page >= (data.pagination.totalPages || 1)} onClick={() => setPage((p) => p + 1)}>Next</Button>
-                <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
-                  <SelectTrigger className="w-[90px] bg-gray-800 border-gray-700 text-white">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[10, 20, 50].map(s => <SelectItem key={s} value={String(s)}>{s}/page</SelectItem>)}
-                  </SelectContent>
-                </Select>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={page <= 1} onClick={() => setPage(1)}>First</Button>
+                  <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</Button>
+                  <div className="flex items-center gap-1">
+                    {(() => {
+                      const totalPages = data?.pagination.totalPages || 1;
+                      const maxVisible = 5;
+                      let start = Math.max(1, page - Math.floor(maxVisible / 2));
+                      let end = Math.min(totalPages, start + maxVisible - 1);
+                      if (end - start + 1 < maxVisible) start = Math.max(1, end - maxVisible + 1);
+                      const buttons: any[] = [];
+                      if (start > 1) {
+                        buttons.push(<Button key={1} variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" onClick={() => setPage(1)}>1</Button>);
+                        if (start > 2) buttons.push(<span key="e1" className="text-gray-400 px-2">...</span>);
+                      }
+                      for (let i = start; i <= end; i++) {
+                        buttons.push(
+                          <Button key={i} variant={i === page ? 'default' : 'outline'} className={i === page ? 'bg-rosae-red hover:bg-rosae-dark-red' : 'border-gray-600 text-gray-300 hover:bg-gray-700'} onClick={() => setPage(i)}>{i}</Button>
+                        );
+                      }
+                      if (end < totalPages) {
+                        if (end < totalPages - 1) buttons.push(<span key="e2" className="text-gray-400 px-2">...</span>);
+                        buttons.push(<Button key={totalPages} variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" onClick={() => setPage(totalPages)}>{totalPages}</Button>);
+                      }
+                      return buttons;
+                    })()}
+                  </div>
+                  <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={!data || page >= (data.pagination.totalPages || 1)} onClick={() => setPage((p) => p + 1)}>Next</Button>
+                  <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" disabled={!data || page >= (data.pagination.totalPages || 1)} onClick={() => setPage(data?.pagination.totalPages || 1)}>Last</Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-400">Go to page:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={data?.pagination.totalPages || 1}
+                    value={page}
+                    onChange={(e) => {
+                      const total = data?.pagination.totalPages || 1;
+                      const v = Math.max(1, Math.min(total, Number(e.target.value) || 1));
+                      setPage(v);
+                    }}
+                    className="bg-gray-800 border border-gray-600 text-white text-sm rounded px-2 py-1 w-16 text-center"
+                  />
+                  <span className="text-sm text-gray-400">of {data?.pagination.totalPages || 1}</span>
+                </div>
               </div>
             </div>
           </CardContent>

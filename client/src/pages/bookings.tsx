@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Plus, Calendar, Users, IndianRupee, Search, X, Edit, Trash2, Phone, ChevronLeft, ChevronRight, Printer } from "lucide-react";
 import { ReviewModal } from '@/components/review-modal';
 
@@ -31,7 +32,7 @@ export default function Bookings() {
   
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(10);
   
   // Filter states
   const [dateFilter, setDateFilter] = useState("");
@@ -199,8 +200,8 @@ export default function Bookings() {
       case 'full_refund': return 'Full Refund';
       case 'partial_refund': return 'Partial Refund';
       case 'refund_pending': return 'Refund Pending';
-      case 'full_payment': return 'Full Payment';
-      case 'partial_payment': return 'Partial Payment';
+      case 'full_payment': return 'FP'; // Full Payment
+      case 'partial_payment': return 'PP'; // Partial Payment
       default: return '—';
     }
   };
@@ -336,7 +337,7 @@ export default function Bookings() {
                   <td>${formatCurrency(Number(booking.snacksAmount || 0))}</td>
                   <td>${formatCurrency(Number(booking.snacksCash || 0))}</td>
                   <td>${formatCurrency(Number(booking.snacksUpi || 0))}</td>
-                  <td>${booking.createdByName || booking.createdByEmail || booking.createdBy || 'N/A'}</td>
+                  <td>${(booking.createdByName || booking.createdByEmail || booking.createdBy) ?? 'System'}</td>
                   <td><span class="status ${statusClass}">${status}</span></td>
                 </tr>`
               }).join('')}
@@ -366,14 +367,34 @@ export default function Bookings() {
             <h2 className="text-2xl font-bold text-white" data-testid="text-page-title">All Bookings</h2>
             <p className="text-gray-400">Manage and view all theatre bookings</p>
           </div>
-          <Button 
-            onClick={() => setIsBookingModalOpen(true)}
-            className="bg-rosae-red hover:bg-rosae-dark-red px-6 py-2"
-            data-testid="button-new-booking"
-          >
-            <Plus className="mr-2 w-4 h-4" />
-            New Booking
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button 
+              onClick={async () => {
+                try {
+                  const res = await fetch('/api/calendar/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+                  const data = await res.json();
+                  if (!res.ok || !data.ok) throw new Error(data.message || 'Sync failed');
+                  toast({ title: 'Sync complete', description: `Scanned ${data.scanned}, created ${data.created}` });
+                  refetch();
+                } catch (e: any) {
+                  toast({ title: 'Sync failed', description: e?.message || 'Unable to sync', variant: 'destructive' });
+                }
+              }}
+              className="bg-blue-600 hover:bg-blue-700 px-4 py-2"
+              data-testid="button-sync-calendar"
+            >
+              <Calendar className="mr-2 w-4 h-4" />
+              Sync from Calendar
+            </Button>
+            <Button 
+              onClick={() => setIsBookingModalOpen(true)}
+              className="bg-rosae-red hover:bg-rosae-dark-red px-6 py-2"
+              data-testid="button-new-booking"
+            >
+              <Plus className="mr-2 w-4 h-4" />
+              New Booking
+            </Button>
+          </div>
         </div>
         
         {/* Filters */}
@@ -575,7 +596,7 @@ export default function Bookings() {
                               <span className="text-sm">{formatDate(booking.bookingDate)}</span>
                             </div>
                           </td>
-                          <td className="py-4 font-medium">{booking.customerName || 'N/A'}</td>
+                          <td className="py-4 font-medium">{(() => { const name = booking.customerName || 'N/A'; const idx = name.toLowerCase().indexOf('paid'); return idx > 0 ? name.slice(0, idx).trim() : name; })()}</td>
                           <td className="py-4 font-medium">{booking.theatreName}</td>
                           <td className="py-4 text-gray-300 text-sm">{booking.timeSlot}</td>
                           <td className="py-4">
@@ -585,17 +606,14 @@ export default function Bookings() {
                             </div>
                           </td>
                           <td className="py-4">
-                            <div className="flex items-center">
-                              <Phone className="w-4 h-4 text-gray-400 mr-2" />
-                              <span className="text-sm">{booking.phoneNumber || 'N/A'}</span>
-                            </div>
+                            <span className="text-sm">{booking.phoneNumber || 'N/A'}</span>
                           </td>
                           <td className="py-4">
                             <Badge className={booking.isEighteenPlus 
                               ? 'bg-green-600/20 text-green-400 border-green-600/30'
                               : 'bg-red-600/20 text-red-400 border-red-600/30'
                             }>
-                              {booking.isEighteenPlus ? 'Yes' : 'No'}
+                              {booking.isEighteenPlus ? 'Y' : 'N'}
                             </Badge>
                           </td>
                           <td className="py-4">
@@ -603,7 +621,7 @@ export default function Bookings() {
                               ? 'bg-green-600/20 text-green-400 border-green-600/30'
                               : 'bg-yellow-600/20 text-yellow-400 border-yellow-600/30'
                             }>
-                              {booking.visited ? 'Yes' : 'No'}
+                              {booking.visited ? 'Y' : 'N'}
                             </Badge>
                           </td>
                           <td className="py-4">
@@ -620,64 +638,98 @@ export default function Bookings() {
                           <td className="py-4 text-green-400 font-medium">{formatCurrency(Number(booking.cashAmount))}</td>
                           <td className="py-4 text-purple-400 font-medium">{formatCurrency(Number(booking.upiAmount))}</td>
                           <td className="py-4 text-sm text-gray-300">
-                            {booking.createdByName || booking.createdByEmail || booking.createdBy || 'N/A'}
+                            {(() => {
+                              const creator = booking.createdByName || booking.createdByEmail || booking.createdBy;
+                              // If created via webhook/calendar, createdBy is null -> show System
+                              return creator ? creator : 'System';
+                            })()}
                           </td>
                           <td className="py-4">
-                            <Badge className={getBookingStatusClass(status)}>
-                              {getBookingStatusLabel(status)}
-                            </Badge>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Badge className={getBookingStatusClass(status)}>
+                                    {getBookingStatusLabel(status)}
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <span>{status === 'partial_payment' ? 'Partial Payment' : status === 'full_payment' ? 'Full Payment' : getBookingStatusLabel(status)}</span>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                           </td>
                           <td className="py-4">
                             <div className="flex space-x-2">
                               {!booking.reviewFlag && (
                                 <>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={async () => {
-                                      try {
-                                        const res = await fetch('/api/reviews/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingId: booking.id }) });
-                                        const data = await res.json();
-                                        if (!res.ok) throw new Error(data.message || 'Failed to create review link');
-                                        const base = window.location.origin;
-                                        const tokenLink = `${base}/reviews?token=${encodeURIComponent(data.token)}`;
-                                        await navigator.clipboard.writeText(tokenLink);
-                                        alert('Review link copied to clipboard.');
-                                      } catch (e: any) {
-                                        alert(e?.message || 'Failed to copy review link');
-                                      }
-                                    }}
-                                    className="border-sky-600/40 text-sky-300 hover:bg-sky-600/15 hover:text-sky-200 gap-2"
-                                    data-testid={`button-review-copy-${booking.id}`}
-                                  >
-                                    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor' className='w-4 h-4'><path d='M7.5 3.75A3.75 3.75 0 0 0 3.75 7.5v8.25a3.75 3.75 0 0 0 3.75 3.75h8.25a3.75 3.75 0 0 0 3.75-3.75V7.5a3.75 3.75 0 0 0-3.75-3.75H7.5Z'/><path d='M7.5 7.5A3.75 3.75 0 0 1 11.25 3.75H18a.75.75 0 0 1 0 1.5h-6.75A2.25 2.25 0 0 0 9 7.5V14.25a.75.75 0 0 1-1.5 0V7.5Z'/></svg>
-                                    Copy Review Link
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={async () => {
-                                      try {
-                                        const res = await fetch('/api/reviews/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingId: booking.id }) });
-                                        const data = await res.json();
-                                        if (!res.ok) throw new Error(data.message || 'Failed to create review link');
-                                        const base = window.location.origin;
-                                        const tokenLink = `${base}/reviews?token=${encodeURIComponent(data.token)}`;
-                                        const message = `Hi ${booking.customerName || ''}, please leave a review here: ${tokenLink}`.trim();
-                                        const phone = (booking.phoneNumber || '').replace(/\D/g, '');
-                                        const wa = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}` : `https://wa.me/?text=${encodeURIComponent(message)}`;
-                                        await navigator.clipboard.writeText(wa);
-                                        alert('WhatsApp link copied to clipboard. You can paste it in WhatsApp now.');
-                                      } catch (e: any) {
-                                        alert(e?.message || 'Failed to copy WhatsApp link');
-                                      }
-                                    }}
-                                    className="border-emerald-600/40 text-emerald-300 hover:bg-emerald-600/15 hover:text-emerald-200 gap-2"
-                                    data-testid={`button-review-wa-${booking.id}`}
-                                  >
-                                    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor' className='w-4 h-4'><path d='M12 2.25c-5.385 0-9.75 4.365-9.75 9.75 0 1.694.438 3.286 1.208 4.677L2.25 21.75l5.25-1.208A9.708 9.708 0 0 0 12 21.75c5.385 0 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25Zm4.19 13.352c-.213.6-1.253 1.14-1.75 1.197-.474.055-1.105.078-1.783-.109-.412-.111-.943-.304-1.626-.593-2.86-1.231-4.71-4.098-4.852-4.291-.141-.194-1.16-1.545-1.16-2.947 0-1.402.73-2.089.99-2.379.26-.29.566-.363.754-.363.188 0 .377.002.542.01.175.01.41-.066.642.49.213.529.727 1.832.792 1.964.065.132.108.289.02.464-.085.175-.129.289-.254.445-.129.152-.273.34-.39.457-.13.132-.265.274-.115.537.149.263.664 1.09 1.43 1.766.984.872 1.816 1.144 2.079 1.273.263.129.418.111.576-.066.158-.175.66-.77.837-1.035.175-.263.35-.219.586-.132.234.087 1.48.695 1.734.82.254.126.421.188.484.29.065.1.065.597-.148 1.197Z'/></svg>
-                                    Copy WhatsApp Link
-                                  </Button>
+                                  {/* CRL button with tooltip */}
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={async () => {
+                                            try {
+                                              const res = await fetch('/api/reviews/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingId: booking.id }) });
+                                              const data = await res.json();
+                                              if (!res.ok) throw new Error(data.message || 'Failed to create review link');
+                                              const base = window.location.origin;
+                                              const tokenLink = `${base}/reviews?token=${encodeURIComponent(data.token)}`;
+                                              await navigator.clipboard.writeText(tokenLink);
+                                              alert('Review link copied to clipboard.');
+                                            } catch (e: any) {
+                                              alert(e?.message || 'Failed to copy review link');
+                                            }
+                                          }}
+                                          className="border-sky-600/40 text-sky-300 hover:bg-sky-600/15 hover:text-sky-200 gap-2"
+                                          data-testid={`button-review-copy-${booking.id}`}
+                                        >
+                                          <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor' className='w-4 h-4'><path d='M7.5 3.75A3.75 3.75 0 0 0 3.75 7.5v8.25a3.75 3.75 0 0 0 3.75 3.75h8.25a3.75 3.75 0 0 0 3.75-3.75V7.5a3.75 3.75 0 0 0-3.75-3.75H7.5Z'/><path d='M7.5 7.5A3.75 3.75 0 0 1 11.25 3.75H18a.75.75 0 0 1 0 1.5h-6.75A2.25 2.25 0 0 0 9 7.5V14.25a.75.75 0 0 1-1.5 0V7.5Z'/></svg>
+                                          CRL
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        Copy Review Link
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+
+                                  {/* CWL button with tooltip */}
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={async () => {
+                                            try {
+                                              const res = await fetch('/api/reviews/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingId: booking.id }) });
+                                              const data = await res.json();
+                                              if (!res.ok) throw new Error(data.message || 'Failed to create review link');
+                                              const base = window.location.origin;
+                                              const tokenLink = `${base}/reviews?token=${encodeURIComponent(data.token)}`;
+                                              const message = `Hi ${booking.customerName || ''}, please leave a review here: ${tokenLink}`.trim();
+                                              const phone = (booking.phoneNumber || '').replace(/\D/g, '');
+                                              const wa = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}` : `https://wa.me/?text=${encodeURIComponent(message)}`;
+                                              await navigator.clipboard.writeText(wa);
+                                              alert('WhatsApp link copied to clipboard. You can paste it in WhatsApp now.');
+                                            } catch (e: any) {
+                                              alert(e?.message || 'Failed to copy WhatsApp link');
+                                            }
+                                          }}
+                                          className="border-emerald-600/40 text-emerald-300 hover:bg-emerald-600/15 hover:text-emerald-200 gap-2"
+                                          data-testid={`button-review-wa-${booking.id}`}
+                                        >
+                                          <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor' className='w-4 h-4'><path d='M12 2.25c-5.385 0-9.75 4.365-9.75 9.75 0 1.694.438 3.286 1.208 4.677L2.25 21.75l5.25-1.208A9.708 9.708 0 0 0 12 21.75c5.385 0 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25Zm4.19 13.352c-.213.6-1.253 1.14-1.75 1.197-.474.055-1.105.078-1.783-.109-.412-.111-.943-.304-1.626-.593-2.86-1.231-4.71-4.098-4.852-4.291-.141-.194-1.16-1.545-1.16-2.947 0-1.402.73-2.089.99-2.379.26-.29.566-.363.754-.363.188 0 .377.002.542.01.175.01.41-.066.642.49.213.529.727 1.832.792 1.964.065.132.108.289.02.464-.085.175-.129.289-.254.445-.129.152-.273.34-.39.457-.13.132-.265.274-.115.537.149.263.664 1.09 1.43 1.766.984.872 1.816 1.144 2.079 1.273.263.129.418.111.576-.066.158-.175.66-.77.837-1.035.175-.263.35-.219.586-.132.234.087 1.48.695 1.734.82.254.126.421.188.484.29.065.1.065.597-.148 1.197Z'/></svg>
+                                          CWL
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        Copy WhatsApp Link
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
                                 </>
                               )}
                               {booking.reviewFlag && (
@@ -714,53 +766,125 @@ export default function Bookings() {
                 </div>
 
                 {/* Pagination Controls */}
-                {totalPages > 1 && (
-                  <div className="flex items-center justify-between py-4">
-                    <div className="text-sm text-gray-400">
-                      Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, data?.pagination?.total || 0)} of {data?.pagination?.total || 0} bookings
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handlePageChange(currentPage - 1)}
-                        disabled={currentPage === 1}
-                        className="border-gray-600 text-gray-300 hover:bg-gray-700"
-                        data-testid="button-prev-page"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                        Previous
-                      </Button>
-                      
-                      <div className="flex space-x-1">
-                        {Array.from({ length: totalPages }, (_, i) => i + 1).map(pageNum => (
-                          <Button
-                            key={pageNum}
-                            size="sm"
-                            variant={pageNum === currentPage ? "default" : "outline"}
-                            onClick={() => handlePageChange(pageNum)}
-                            className={pageNum === currentPage 
-                              ? "bg-rosae-red hover:bg-rosae-dark-red" 
-                              : "border-gray-600 text-gray-300 hover:bg-gray-700"
-                            }
-                            data-testid={`button-page-${pageNum}`}
-                          >
-                            {pageNum}
-                          </Button>
-                        ))}
+                {totalPages > 0 && (
+                  <div className="flex flex-col gap-3 items-stretch justify-between py-4">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-gray-400">
+                        Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, data?.pagination?.total || 0)} of {data?.pagination?.total || 0} bookings
                       </div>
-                      
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handlePageChange(currentPage + 1)}
-                        disabled={currentPage === totalPages}
-                        className="border-gray-600 text-gray-300 hover:bg-gray-700"
-                        data-testid="button-next-page"
-                      >
-                        Next
-                        <ChevronRight className="w-4 h-4" />
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-400">Per page:</span>
+                        <select
+                          value={pageSize}
+                          onChange={(e) => { const v = Number(e.target.value) || 10; setPageSize(v); handlePageChange(1); }}
+                          className="bg-gray-800 border border-gray-600 text-white text-sm rounded px-2 py-1"
+                        >
+                          <option value={10}>10</option>
+                          <option value={20}>20</option>
+                          <option value={50}>50</option>
+                          <option value={100}>100</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 justify-between">
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handlePageChange(1)}
+                          disabled={currentPage === 1}
+                          className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                        >
+                          First
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handlePageChange(currentPage - 1)}
+                          disabled={currentPage === 1}
+                          className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                          data-testid="button-prev-page"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                          Previous
+                        </Button>
+
+                        <div className="flex items-center gap-1">
+                          {(() => {
+                            const maxVisible = 5;
+                            const total = totalPages;
+                            let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+                            let end = Math.min(total, start + maxVisible - 1);
+                            if (end - start + 1 < maxVisible) start = Math.max(1, end - maxVisible + 1);
+                            const buttons: any[] = [];
+                            if (start > 1) {
+                              buttons.push(
+                                <Button key={1} size="sm" variant="outline" onClick={() => handlePageChange(1)} className="border-gray-600 text-gray-300 hover:bg-gray-700">1</Button>
+                              );
+                              if (start > 2) buttons.push(<span key="e1" className="text-gray-400 px-2">...</span>);
+                            }
+                            for (let i = start; i <= end; i++) {
+                              buttons.push(
+                                <Button
+                                  key={i}
+                                  size="sm"
+                                  variant={i === currentPage ? "default" : "outline"}
+                                  onClick={() => handlePageChange(i)}
+                                  className={i === currentPage ? "bg-rosae-red hover:bg-rosae-dark-red" : "border-gray-600 text-gray-300 hover:bg-gray-700"}
+                                >
+                                  {i}
+                                </Button>
+                              );
+                            }
+                            if (end < total) {
+                              if (end < total - 1) buttons.push(<span key="e2" className="text-gray-400 px-2">...</span>);
+                              buttons.push(
+                                <Button key={total} size="sm" variant="outline" onClick={() => handlePageChange(total)} className="border-gray-600 text-gray-300 hover:bg-gray-700">{total}</Button>
+                              );
+                            }
+                            return buttons;
+                          })()}
+                        </div>
+
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handlePageChange(currentPage + 1)}
+                          disabled={currentPage === totalPages}
+                          className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                          data-testid="button-next-page"
+                        >
+                          Next
+                          <ChevronRight className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handlePageChange(totalPages)}
+                          disabled={currentPage === totalPages}
+                          className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                        >
+                          Last
+                        </Button>
+                      </div>
+
+                      {/* Quick jump */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-400">Go to page:</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={totalPages}
+                          value={currentPage}
+                          onChange={(e) => {
+                            const v = Math.max(1, Math.min(totalPages, Number(e.target.value) || 1));
+                            handlePageChange(v);
+                          }}
+                          className="bg-gray-800 border border-gray-600 text-white text-sm rounded px-2 py-1 w-16 text-center"
+                        />
+                        <span className="text-sm text-gray-400">of {totalPages}</span>
+                      </div>
                     </div>
                   </div>
                 )}

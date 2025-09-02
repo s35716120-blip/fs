@@ -141,8 +141,7 @@ export default function LoginPage() {
                 )}
               </Button>
 
-              <p className="text-xs text-neutral-500 text-center">Use your assigned email and password</p>
-              <p className="text-xs text-neutral-500 text-center mt-2">Guest? Try <a href="/quick-signin" className="text-blue-400 underline">Quick Sign-in</a></p>
+              {/* Helper text removed as requested */}
             </form>
 
             <div className="text-center">
@@ -155,7 +154,13 @@ export default function LoginPage() {
         </Card>
 
         <div className="text-center mt-6">
-          <p className="text-xs text-neutral-500">© {new Date().getFullYear()} ROSAE Theatre Management</p>
+          <p className="text-[11px] text-neutral-400/90 tracking-wide select-none">
+            <span className="opacity-90">Copyright</span>
+            <span className="mx-1">©</span>
+            <span className="opacity-95">2024</span>
+            <span className="mx-1">by</span>
+            <span className="font-medium text-neutral-300">QUANTELLOVENTURES PRIVATE LIMITED</span>
+          </p>
         </div>
       </div>
     </div>
